@@ -21,7 +21,7 @@ h1 { margin: 0; font-size: clamp(1.9rem, 3vw, 2.6rem); letter-spacing: -.04em; }
 .last-trial { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; } .last-trial strong { display: block; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; } .last-trial .value { margin-top: 2px; } .empty { color: var(--muted); }
 .lick-timeline-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .lick-timeline-label { color: var(--muted); font-size: .74rem; font-weight: 700; letter-spacing: .13em; margin-bottom: 4px; }
-#lick-timeline { display: block; width: 100%; height: auto; min-height: 145px; overflow: visible; }
+#lick-timeline { display: block; width: 100%; height: auto; min-height: 160px; overflow: visible; }
 #lick-timeline .stimulus-epoch { fill: none; stroke: #82939a; stroke-width: 3; stroke-linejoin: round; }
 #lick-timeline .anticipatory-band { fill: rgba(94, 224, 160, .10); }
 #lick-timeline .axis, #lick-timeline .axis-tick { stroke: #718087; stroke-width: 2; }

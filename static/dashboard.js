@@ -22,23 +22,23 @@
     return element;
   }
   function renderLickTimeline(trial) {
-    var svg = $("lick-timeline"), minTime = -0.5, maxTime = 4.0, stimulusOffset = 1.5, left = 30, right = 570, baseline = 115;
+    var svg = $("lick-timeline"), minTime = -0.5, maxTime = 4.0, stimulusOffset = 1.5, left = 30, right = 570, baseline = 138;
     clear(svg);
     function xFor(time) { return left + ((time - minTime) / (maxTime - minTime)) * (right - left); }
     if (!trial) {
-      svg.appendChild(svgElement("text", { x: 300, y: 100, "text-anchor": "middle", "class": "timeline-message" }, "No completed trial received"));
+      svg.appendChild(svgElement("text", { x: 300, y: 125, "text-anchor": "middle", "class": "timeline-message" }, "No completed trial received"));
       return;
     }
     // This is protocol-intended epoch timing for operator feedback, not photodiode measurement.
-    svg.appendChild(svgElement("path", { d: "M " + left + " 40 H " + xFor(0) + " V 24 H " + xFor(stimulusOffset) + " V 40 H " + right, "class": "stimulus-epoch" }));
-    svg.appendChild(svgElement("text", { x: (xFor(0) + xFor(stimulusOffset)) / 2, y: 17, "text-anchor": "middle", "class": "timeline-message" }, "VISUAL STIMULUS"));
-    svg.appendChild(svgElement("rect", { x: xFor(0), y: 64, width: xFor(1) - xFor(0), height: 51, "class": "anticipatory-band" }));
-    svg.appendChild(svgElement("text", { x: (xFor(0) + xFor(1)) / 2, y: 57, "text-anchor": "middle", "class": "timeline-message" }, "ANTICIPATORY 0–1 s"));
+    svg.appendChild(svgElement("path", { d: "M " + left + " 49 H " + xFor(0) + " V 30 H " + xFor(stimulusOffset) + " V 49 H " + right, "class": "stimulus-epoch" }));
+    svg.appendChild(svgElement("text", { x: (xFor(0) + xFor(stimulusOffset)) / 2, y: 20, "text-anchor": "middle", "class": "timeline-message" }, "VISUAL STIMULUS"));
+    svg.appendChild(svgElement("rect", { x: xFor(0), y: 74, width: xFor(1) - xFor(0), height: 48, "class": "anticipatory-band" }));
+    svg.appendChild(svgElement("text", { x: (xFor(0) + xFor(1)) / 2, y: 67, "text-anchor": "middle", "class": "timeline-message" }, "ANTICIPATORY 0–1 s"));
     svg.appendChild(svgElement("line", { x1: left, y1: baseline, x2: right, y2: baseline, "class": "axis" }));
     [[-0.5, "-0.5"], [0, "0"], [1, "1.0"], [4, "4.0 s"]].forEach(function (label) {
       var x = xFor(label[0]);
       svg.appendChild(svgElement("line", { x1: x, y1: baseline - 5, x2: x, y2: baseline + 5, "class": "axis-tick" }));
-      svg.appendChild(svgElement("text", { x: x, y: 153, "text-anchor": "middle" }, label[1]));
+      svg.appendChild(svgElement("text", { x: x, y: 181, "text-anchor": "middle" }, label[1]));
     });
     var lickTimes = Array.isArray(trial.lick_times_sec) ? trial.lick_times_sec : null;
     if (lickTimes) {
@@ -47,18 +47,18 @@
       validLicks.forEach(function (value) { var x = xFor(value); svg.appendChild(svgElement("line", { x1: x, y1: baseline - 18, x2: x, y2: baseline + 18, "class": "lick-tick" })); });
       if (!validLicks.length) {
         var message = lickTimes.length === 0 ? "No licks" : (numericLicks.length ? "No licks in displayed window" : "Lick timing unavailable");
-      svg.appendChild(svgElement("text", { x: 300, y: 105, "text-anchor": "middle", "class": "timeline-message" }, message));
+      svg.appendChild(svgElement("text", { x: 300, y: 130, "text-anchor": "middle", "class": "timeline-message" }, message));
       }
     } else {
-      svg.appendChild(svgElement("text", { x: 300, y: 105, "text-anchor": "middle", "class": "timeline-message" }, "Lick timing unavailable"));
+      svg.appendChild(svgElement("text", { x: 300, y: 130, "text-anchor": "middle", "class": "timeline-message" }, "Lick timing unavailable"));
     }
     var stimX = xFor(0);
-    svg.appendChild(svgElement("line", { x1: stimX, y1: 42, x2: stimX, y2: 138, "class": "stim-marker" }));
-    svg.appendChild(svgElement("text", { x: stimX + 5, y: 48, "class": "marker-label stim-label" }, "STIM"));
+    svg.appendChild(svgElement("line", { x1: stimX, y1: 78, x2: stimX, y2: 161, "class": "stim-marker" }));
+    svg.appendChild(svgElement("text", { x: stimX + 5, y: 96, "class": "marker-label stim-label" }, "STIM"));
     if (trial.reward_omission === true || trial.reward_delivered === true) {
       var rewardX = xFor(1), rewardClass = trial.reward_omission === true ? "omission-marker" : "reward-marker", rewardLabel = trial.reward_omission === true ? "OMISSION" : "REWARD";
-      svg.appendChild(svgElement("line", { x1: rewardX, y1: 42, x2: rewardX, y2: 138, "class": rewardClass }));
-      svg.appendChild(svgElement("text", { x: rewardX + 5, y: 48, "class": "marker-label " + (trial.reward_omission === true ? "omission-label" : "reward-label") }, rewardLabel));
+      svg.appendChild(svgElement("line", { x1: rewardX, y1: 78, x2: rewardX, y2: 161, "class": rewardClass }));
+      svg.appendChild(svgElement("text", { x: rewardX + 5, y: 96, "class": "marker-label " + (trial.reward_omission === true ? "omission-label" : "reward-label") }, rewardLabel));
     }
   }
   function setPreview(filename) {
