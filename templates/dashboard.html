@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rig Monitor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">READ-ONLY OBSERVATION</p>
+        <h1>Rig Monitor</h1>
+        <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span></p>
+      </div>
+      <div id="connection" class="status stale"><span class="dot"></span><span>STALE</span></div>
+    </header>
+
+    <section class="grid two-col">
+      <article class="card stimulus-card">
+        <p class="eyebrow">CURRENT STIMULUS</p>
+        <div class="preview"><span id="preview-message">Image preview unavailable</span></div>
+        <div class="filename" id="image">—</div>
+        <div class="role" id="stimulus-role">—</div>
+      </article>
+      <article class="card session-card">
+        <p class="eyebrow">SESSION</p>
+        <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
+        <div class="metric-row"><span>Trial</span><strong id="trial">—</strong></div>
+        <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
+        <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
+      </article>
+    </section>
+
+    <section class="card">
+      <p class="eyebrow">LAST TRIAL</p>
+      <div id="last-trial" class="last-trial empty">No completed trial received</div>
+    </section>
+
+    <section class="card history-card">
+      <div class="section-heading"><p class="eyebrow">RECENT TRIALS</p><span>Newest first · up to 20 shown</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
+          <tbody id="history"><tr><td colspan="5" class="empty">No trial history</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>Telemetry is observational only. The monitor sends no commands to experiment hardware.</footer>
+  </main>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
