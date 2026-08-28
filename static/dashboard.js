@@ -39,9 +39,13 @@
     });
     var lickTimes = Array.isArray(trial.lick_times_sec) ? trial.lick_times_sec : null;
     if (lickTimes) {
-      var validLicks = lickTimes.filter(function (value) { return typeof value === "number" && isFinite(value) && value >= minTime && value <= maxTime; });
+      var numericLicks = lickTimes.filter(function (value) { return typeof value === "number" && isFinite(value); });
+      var validLicks = numericLicks.filter(function (value) { return value >= minTime && value <= maxTime; });
       validLicks.forEach(function (value) { var x = xFor(value); svg.appendChild(svgElement("line", { x1: x, y1: baseline - 18, x2: x, y2: baseline + 18, "class": "lick-tick" })); });
-      if (!validLicks.length) svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, "No licks"));
+      if (!validLicks.length) {
+        var message = lickTimes.length === 0 ? "No licks" : (numericLicks.length ? "No licks in displayed window" : "Lick timing unavailable");
+        svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, message));
+      }
     } else {
       svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, "Lick timing unavailable"));
     }

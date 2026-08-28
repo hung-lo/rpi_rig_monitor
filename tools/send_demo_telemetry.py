@@ -7,9 +7,16 @@ import math
 import socket
 import time
 
+LICK_PATTERNS = ([0.21, 0.48], [-0.12, 1.27], [])
+
 
 def utc_timestamp():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def demo_lick_times(trial):
+    """Return a deterministic pattern, rotating independently from stimulus role."""
+    return list(LICK_PATTERNS[((trial - 1) // 3) % len(LICK_PATTERNS)])
 
 
 def main():
@@ -51,7 +58,7 @@ def main():
             send("state", phase="STIMULUS", **common)
             time.sleep(1.0)
             # Generate licks first, then derive the operator-facing label from them.
-            lick_times = [-0.12, 1.27] if trial % 4 == 0 else ([0.21, 0.48] if trial % 2 else [-0.12, 1.27])
+            lick_times = demo_lick_times(trial)
             anticipatory_lick = any(0.0 <= value <= 1.0 for value in lick_times)
             reward_scheduled = role != "unrewarded"
             reward_omission = role == "reward_omission"
