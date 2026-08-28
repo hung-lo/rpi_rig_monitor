@@ -14,6 +14,46 @@
   }
   function addCell(row, value, className) { var cell = document.createElement("td"); cell.textContent = text(value); if (className) cell.className = className; row.appendChild(cell); }
   var requestedImage = null;
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  function svgElement(name, attributes, content) {
+    var element = document.createElementNS(SVG_NS, name);
+    Object.keys(attributes || {}).forEach(function (key) { element.setAttribute(key, attributes[key]); });
+    if (content !== undefined) element.textContent = content;
+    return element;
+  }
+  function renderLickTimeline(trial) {
+    var svg = $("lick-timeline"), minTime = -0.5, maxTime = 4.0, left = 30, right = 570, baseline = 82;
+    clear(svg);
+    function xFor(time) { return left + ((time - minTime) / (maxTime - minTime)) * (right - left); }
+    if (!trial) {
+      svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, "No completed trial received"));
+      return;
+    }
+    svg.appendChild(svgElement("rect", { x: xFor(0), y: 31, width: xFor(1) - xFor(0), height: 61, "class": "anticipatory-band" }));
+    svg.appendChild(svgElement("text", { x: (xFor(0) + xFor(1)) / 2, y: 22, "text-anchor": "middle", "class": "timeline-message" }, "ANTICIPATORY 0–1 s"));
+    svg.appendChild(svgElement("line", { x1: left, y1: baseline, x2: right, y2: baseline, "class": "axis" }));
+    [[-0.5, "-0.5"], [0, "0"], [1, "1.0"], [4, "4.0 s"]].forEach(function (label) {
+      var x = xFor(label[0]);
+      svg.appendChild(svgElement("line", { x1: x, y1: baseline - 5, x2: x, y2: baseline + 5, "class": "axis-tick" }));
+      svg.appendChild(svgElement("text", { x: x, y: 113, "text-anchor": "middle" }, label[1]));
+    });
+    var lickTimes = Array.isArray(trial.lick_times_sec) ? trial.lick_times_sec : null;
+    if (lickTimes) {
+      var validLicks = lickTimes.filter(function (value) { return typeof value === "number" && isFinite(value) && value >= minTime && value <= maxTime; });
+      validLicks.forEach(function (value) { var x = xFor(value); svg.appendChild(svgElement("line", { x1: x, y1: baseline - 18, x2: x, y2: baseline + 18, "class": "lick-tick" })); });
+      if (!validLicks.length) svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, "No licks"));
+    } else {
+      svg.appendChild(svgElement("text", { x: 300, y: 72, "text-anchor": "middle", "class": "timeline-message" }, "Lick timing unavailable"));
+    }
+    var stimX = xFor(0);
+    svg.appendChild(svgElement("line", { x1: stimX, y1: 28, x2: stimX, y2: 105, "class": "stim-marker" }));
+    svg.appendChild(svgElement("text", { x: stimX + 5, y: 38, "class": "marker-label stim-label" }, "STIM"));
+    if (trial.reward_omission === true || trial.reward_delivered === true) {
+      var rewardX = xFor(1), rewardClass = trial.reward_omission === true ? "omission-marker" : "reward-marker", rewardLabel = trial.reward_omission === true ? "OMISSION" : "REWARD";
+      svg.appendChild(svgElement("line", { x1: rewardX, y1: 28, x2: rewardX, y2: 105, "class": rewardClass }));
+      svg.appendChild(svgElement("text", { x: rewardX + 5, y: 38, "class": "marker-label " + (trial.reward_omission === true ? "omission-label" : "reward-label") }, rewardLabel));
+    }
+  }
   function setPreview(filename) {
     var image = $("preview-image"), message = $("preview-message");
     if (!filename) { requestedImage = null; image.hidden = true; image.removeAttribute("src"); message.hidden = false; return; }
@@ -47,6 +87,7 @@
     $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
     $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
     var last = data.last_trial, lastNode = $("last-trial"), summaryNode = $("last-summary");
+    renderLickTimeline(last);
     clear(lastNode);
     if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; summaryNode.textContent = "No completed trial received"; } else {
       lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
