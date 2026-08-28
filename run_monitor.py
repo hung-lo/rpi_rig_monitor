@@ -11,7 +11,7 @@ from monitor.state import MonitorState
 from monitor.web import create_app
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     state = MonitorState(stale_after_sec=args.stale_after_sec)
@@ -30,6 +30,7 @@ def main() -> None:
         app.run(host=args.web_host, port=args.web_port, debug=False, use_reloader=False)
     finally:
         receiver.stop()
+    return 0
 
 
 if __name__ == "__main__":

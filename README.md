@@ -39,7 +39,12 @@ The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:80
 1. Terminal 1: run `python run_monitor.py`.
 2. Terminal 2: run `python tools/send_demo_telemetry.py`.
 3. Open `http://localhost:8080`, or `http://<control-pi-ip>:8080` from another machine on the LAN.
-4. Verify that the dashboard loads, `LIVE` appears, trials increment, phases change, image filenames change, the last-trial summary updates, and recent history grows. Confirm that reward/omission/delivery fields agree and the anticipatory-lick label agrees with the emitted `lick_times_sec` window.
+4. While the demo is running, verify that the dashboard loads, `LIVE` appears, trials increment, phases change, image filenames change, the last-trial summary updates, and recent history grows. Confirm that reward/omission/delivery fields agree and the anticipatory-lick label agrees with the emitted `lick_times_sec` window.
+5. After the finite demo sender exits, wait approximately the configured stale threshold (about five seconds by default). Verify that `LIVE` changes to `STALE`, while the last known state and recent history remain visible.
+6. Start the demo sender again with `python tools/send_demo_telemetry.py`. Verify that `STALE` changes to `LIVE`, a new session ID appears, old recent-trial history is cleared, and old image/trial/block/ETA values do not leak into the new session.
+7. While the monitor receiver is healthy, request `GET /health` and verify HTTP 200 with a response such as `{"status":"ok","udp_receiver":"ok"}`.
+
+`/api/state` `LIVE`/`STALE` reports telemetry freshness from the experiment or demo sender. `/health` reports the health of the monitor process and UDP receiver. These are intentionally separate concepts.
 
 The demo is a finite session and stops after `--total-trials` completed trials. Use `--session-id` to select a stable ID; otherwise each invocation gets a UTC-based unique demo ID.
 
