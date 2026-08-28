@@ -12,12 +12,12 @@
       <div>
         <p class="eyebrow">READ-ONLY OBSERVATION</p>
         <h1>Rig Monitor</h1>
-        <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span></p>
       </div>
+      <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span></p>
       <div id="connection" class="status stale"><span class="dot"></span><span>STALE</span></div>
     </header>
 
-    <section class="grid two-col">
+    <section class="grid top-row">
       <article class="card stimulus-card">
         <p class="eyebrow">CURRENT STIMULUS</p>
         <div class="preview"><img id="preview-image" alt="Current stimulus preview" hidden><span id="preview-message">Image preview unavailable</span></div>
@@ -31,11 +31,12 @@
         <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
         <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
       </article>
-    </section>
-
-    <section class="card">
-      <p class="eyebrow">LAST TRIAL</p>
-      <div id="last-trial" class="last-trial empty">No completed trial received</div>
+      <article class="card last-trial-card">
+        <p class="eyebrow">LAST TRIAL</p>
+        <div id="last-summary" class="summary-line">No completed trial received</div>
+        <div id="last-trial" class="last-trial empty">No completed trial received</div>
+        <div class="raster-reserve" aria-hidden="true"></div>
+      </article>
     </section>
 
     <section class="card history-card">

@@ -29,6 +29,16 @@
     if (trial.reward_scheduled === false) return "NO REWARD";
     return "UNKNOWN";
   }
+  function trialSummary(trial) {
+    var condition;
+    if (trial.reward_omission === true) condition = "Reward omission";
+    else if (trial.reward_scheduled === true) condition = "Rewarded cue";
+    else if (trial.reward_scheduled === false) condition = "Unrewarded cue";
+    else if (trial.stimulus_role) condition = String(trial.stimulus_role);
+    else return "Trial summary unavailable";
+    if (typeof trial.anticipatory_lick !== "boolean") return condition;
+    return condition + " + " + (trial.reward_scheduled === false ? (trial.anticipatory_lick ? "lick" : "no lick") : (trial.anticipatory_lick ? "anticipatory lick" : "no anticipatory lick"));
+  }
   function render(data) {
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
@@ -36,10 +46,10 @@
     setPreview(data.image);
     $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
     $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
-    var last = data.last_trial, lastNode = $("last-trial");
+    var last = data.last_trial, lastNode = $("last-trial"), summaryNode = $("last-summary");
     clear(lastNode);
-    if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; } else {
-      lastNode.className = "last-trial"; addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
+    if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; summaryNode.textContent = "No completed trial received"; } else {
+      lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
     }
     var rows = (data.recent_trials || []).slice(0, 20), body = $("history"); clear(body);
     if (!rows.length) { var empty = document.createElement("tr"); var emptyCell = document.createElement("td"); emptyCell.colSpan = 5; emptyCell.className = "empty"; emptyCell.textContent = "No trial history"; empty.appendChild(emptyCell); body.appendChild(empty); return; }
