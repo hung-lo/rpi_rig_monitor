@@ -29,12 +29,34 @@ class UDPReceiver(object):
         self.port = port
         self._stop_event = threading.Event()
         self._socket: Optional[socket.socket] = None
+        self._healthy = False
+        self._failed = False
+
+    def bind(self) -> None:
+        """Bind synchronously so startup cannot advertise a dead receiver."""
+        if self._socket is not None:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(0.5)
+            sock.bind((self.host, self.port))
+        except OSError:
+            sock.close()
+            self._failed = True
+            raise
+        self._socket = sock
+        self._healthy = True
+
+    def health_status(self) -> str:
+        if self._healthy:
+            return "ok"
+        if self._failed:
+            return "failed"
+        return "starting"
 
     def serve_forever(self) -> None:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._socket = sock
-        sock.settimeout(0.5)
-        sock.bind((self.host, self.port))
+        self.bind()
+        sock = self._socket
         try:
             while not self._stop_event.is_set():
                 try:
@@ -44,9 +66,15 @@ class UDPReceiver(object):
                 packet = decode_packet(payload)
                 if packet is not None:
                     self.state.update(packet)
+        except OSError:
+            if not self._stop_event.is_set():
+                self._failed = True
+                LOGGER.exception("UDP receiver stopped unexpectedly")
         finally:
-            sock.close()
+            if sock is not None:
+                sock.close()
             self._socket = None
+            self._healthy = False
 
     def stop(self) -> None:
         self._stop_event.set()

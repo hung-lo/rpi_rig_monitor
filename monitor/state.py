@@ -44,8 +44,9 @@ class MonitorState(object):
             if (session_id is not None and self._data["session_id"] is not None
                     and session_id != self._data["session_id"]):
                 self._recent.clear()
-                self._data["last_trial"] = None
-                self._data["recent_trials"] = []
+                for key in ("phase", "trial", "total_trials", "block", "total_blocks",
+                            "image", "stimulus_role", "eta_sec", "last_trial", "recent_trials"):
+                    self._data[key] = [] if key == "recent_trials" else None
 
             for key in ("protocol", "session_id", "phase", "trial", "total_trials",
                         "block", "total_blocks", "image", "stimulus_role", "eta_sec"):
@@ -71,6 +72,5 @@ class MonitorState(object):
                 "connected": connected,
                 "status": "LIVE" if connected else "STALE",
                 "last_packet_age_sec": age,
-                "last_packet_received_local_time": self._last_received,
             })
             return result

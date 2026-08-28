@@ -2,6 +2,8 @@ import json
 import unittest
 
 from monitor.receiver import decode_packet
+from monitor.receiver import UDPReceiver
+from monitor.state import MonitorState
 
 
 class ReceiverTests(unittest.TestCase):
@@ -17,6 +19,12 @@ class ReceiverTests(unittest.TestCase):
     def test_non_object_and_missing_type_are_rejected(self):
         self.assertIsNone(decode_packet(b"[]"))
         self.assertIsNone(decode_packet(b"{}"))
+
+    def test_bind_failure_is_raised_and_marked_failed(self):
+        receiver = UDPReceiver(MonitorState(), host="256.0.0.1", port=5055)
+        with self.assertRaises(OSError):
+            receiver.bind()
+        self.assertEqual(receiver.health_status(), "failed")
 
 
 if __name__ == "__main__":

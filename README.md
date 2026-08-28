@@ -6,7 +6,7 @@ The monitor is observational only. Experimental controllers must never depend on
 
 ## Requirements
 
-Python 3.7+. The code uses Python 3.7-era syntax and pinned dependencies for Raspberry Pi 4B compatibility.
+Python 3.7+. The code uses Python 3.7-era syntax, and `requirements.txt` fully pins the Flask stack to versions compatible with the Raspberry Pi 4B deployment target.
 
 ## Installation
 
@@ -33,6 +33,15 @@ python tools/send_demo_telemetry.py
 Open [http://localhost:8080](http://localhost:8080). From another machine on the same LAN, open `http://<control-pi-lan-ip>:8080`.
 
 The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:8080`. Override these with `--udp-host`, `--udp-port`, `--web-host`, `--web-port`, and `--stale-after-sec` (or the corresponding `RIG_MONITOR_*` environment variables).
+
+## Manual Phase 1 acceptance test
+
+1. Terminal 1: run `python run_monitor.py`.
+2. Terminal 2: run `python tools/send_demo_telemetry.py`.
+3. Open `http://localhost:8080`, or `http://<control-pi-ip>:8080` from another machine on the LAN.
+4. Verify that the dashboard loads, `LIVE` appears, trials increment, phases change, image filenames change, the last-trial summary updates, and recent history grows. Confirm that reward/omission/delivery fields agree and the anticipatory-lick label agrees with the emitted `lick_times_sec` window.
+
+The demo is a finite session and stops after `--total-trials` completed trials. Use `--session-id` to select a stable ID; otherwise each invocation gets a UTC-based unique demo ID.
 
 ## Telemetry
 

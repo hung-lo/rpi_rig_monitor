@@ -34,12 +34,25 @@ class MonitorStateTests(unittest.TestCase):
 
     def test_session_change_clears_history(self):
         state = MonitorState()
-        state.update({"type": "trial_complete", "session_id": "old", "trial": 1}, received_at=1.0)
+        state.update({"type": "state", "session_id": "old", "phase": "TASK", "trial": 8,
+                      "total_trials": 20, "block": 2, "total_blocks": 2, "image": "old.png",
+                      "stimulus_role": "old_role", "eta_sec": 12}, received_at=1.0)
+        state.update({"type": "trial_complete", "session_id": "old", "trial": 8}, received_at=1.0)
         state.update({"type": "state", "session_id": "new", "trial": 1}, received_at=2.0)
         snapshot = state.snapshot(now=2.0)
         self.assertEqual(snapshot["session_id"], "new")
+        self.assertIsNone(snapshot["image"])
+        self.assertIsNone(snapshot["phase"])
+        self.assertIsNone(snapshot["block"])
+        self.assertIsNone(snapshot["eta_sec"])
+        self.assertIsNone(snapshot["total_trials"])
         self.assertEqual(snapshot["recent_trials"], [])
         self.assertIsNone(snapshot["last_trial"])
+
+    def test_only_recognized_message_types_update(self):
+        state = MonitorState()
+        self.assertFalse(state.update({"type": "diagnostic", "session_id": "ignored"}))
+        self.assertIsNone(state.snapshot()["session_id"])
 
 
 if __name__ == "__main__":
