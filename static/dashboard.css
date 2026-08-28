@@ -11,7 +11,8 @@ h1 { margin: 0 0 4px; font-size: clamp(2rem, 4vw, 3rem); letter-spacing: -.04em;
 .live { color: var(--accent); } .live .dot { background: var(--accent); } .stale { color: var(--warn); }
 .grid { display: grid; gap: 18px; margin-bottom: 18px; } .two-col { grid-template-columns: 1.15fr .85fr; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 22px; margin-bottom: 18px; }
-.preview { min-height: 145px; display: grid; place-items: center; border: 1px dashed #43515a; border-radius: 5px; color: var(--muted); background: #12191d; margin-bottom: 16px; }
+.preview { min-height: 145px; display: grid; place-items: center; border: 1px dashed #43515a; border-radius: 5px; color: var(--muted); background: #12191d; margin-bottom: 16px; overflow: hidden; }
+.preview img { display: block; max-width: 100%; max-height: 260px; width: auto; height: auto; object-fit: contain; }
 .filename { font-size: 1.2rem; overflow-wrap: anywhere; } .role { color: var(--accent); margin-top: 4px; }
 .metric-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--muted); } .metric-row:last-child { border: 0; }
 .metric-row strong { color: var(--text); font-weight: 600; text-align: right; }

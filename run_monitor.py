@@ -25,7 +25,7 @@ def main() -> int:
     receiver_thread.start()
     print("UDP telemetry listening on {0}:{1}".format(args.udp_host, args.udp_port), flush=True)
     print("Dashboard available at http://<host>:{0}".format(args.web_port), flush=True)
-    app = create_app(state, receiver)
+    app = create_app(state, receiver, image_dir=args.image_dir)
     try:
         app.run(host=args.web_host, port=args.web_port, debug=False, use_reloader=False)
     finally:

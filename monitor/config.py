@@ -4,6 +4,8 @@ import argparse
 import os
 from typing import Any
 
+DEFAULT_IMAGE_DIR = "/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the read-only rig monitor")
@@ -12,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--web-host", default=os.environ.get("RIG_MONITOR_WEB_HOST", "0.0.0.0"))
     parser.add_argument("--web-port", type=int, default=int(os.environ.get("RIG_MONITOR_WEB_PORT", "8080")))
     parser.add_argument("--stale-after-sec", type=float, default=float(os.environ.get("RIG_MONITOR_STALE_AFTER_SEC", "5.0")))
+    parser.add_argument("--image-dir", default=os.environ.get("RIG_MONITOR_IMAGE_DIR", DEFAULT_IMAGE_DIR))
     return parser
 
 

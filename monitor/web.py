@@ -1,11 +1,13 @@
 """Flask dashboard application."""
 
-from flask import Flask, jsonify, render_template
+import os
+
+from flask import Flask, jsonify, render_template, send_from_directory
 
 from .state import MonitorState
 
 
-def create_app(state: MonitorState, receiver=None) -> Flask:
+def create_app(state: MonitorState, receiver=None, image_dir=None) -> Flask:
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
 
     @app.route("/")
@@ -22,5 +24,11 @@ def create_app(state: MonitorState, receiver=None) -> Flask:
         status = "ok" if udp_status == "ok" else "unhealthy"
         response = jsonify({"status": status, "udp_receiver": udp_status})
         return response, (200 if status == "ok" else 503)
+
+    @app.route("/stimulus-image/<filename>")
+    def stimulus_image(filename):
+        if not image_dir or not os.path.isdir(image_dir):
+            return "", 404
+        return send_from_directory(image_dir, filename)
 
     return app

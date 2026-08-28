@@ -27,7 +27,7 @@ def main():
     session_id = args.session_id or "demo_{0}".format(time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
     total_blocks = int(math.ceil(float(args.total_trials) / args.trials_per_block))
     address = (args.host, args.port)
-    images = ["natimg_center_1825.png", "natimg_left_0412.png", "natimg_right_0931.png"]
+    images = ["natimg_center_0693.png", "natimg_center_1393.png", "natimg_center_2093.png", "natimg_center_2793.png"]
     roles = ["rewarded_high_1", "reward_omission", "unrewarded"]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 

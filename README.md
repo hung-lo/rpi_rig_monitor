@@ -34,6 +34,25 @@ Open [http://localhost:8080](http://localhost:8080). From another machine on the
 
 The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:8080`. Override these with `--udp-host`, `--udp-port`, `--web-host`, `--web-port`, and `--stale-after-sec` (or the corresponding `RIG_MONITOR_*` environment variables).
 
+## Phase 2A local image preview
+
+The dashboard can preview the current stimulus from a local copy of the natural-image library. The library is deliberately not included in this repository. On the current Control Pi, the default directory is `/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png`.
+
+Configure another directory with:
+
+```bash
+python run_monitor.py --image-dir /some/image/directory
+```
+
+or:
+
+```bash
+export RIG_MONITOR_IMAGE_DIR=/some/image/directory
+python run_monitor.py
+```
+
+Telemetry sends only the image filename; the Control Pi browser preview serves the corresponding file from its local copy. If an image is missing, telemetry and the experiment are unaffected and the dashboard shows `Image preview unavailable`. The preview is an operator reference, not scientific stimulus-onset timing.
+
 ## Manual Phase 1 acceptance test
 
 1. Terminal 1: run `python run_monitor.py`.

@@ -13,6 +13,16 @@
     heading.textContent = label; content.className = "value"; content.textContent = text(value); wrapper.appendChild(heading); wrapper.appendChild(content); parent.appendChild(wrapper);
   }
   function addCell(row, value, className) { var cell = document.createElement("td"); cell.textContent = text(value); if (className) cell.className = className; row.appendChild(cell); }
+  var requestedImage = null;
+  function setPreview(filename) {
+    var image = $("preview-image"), message = $("preview-message");
+    if (!filename) { requestedImage = null; image.hidden = true; image.removeAttribute("src"); message.hidden = false; return; }
+    if (filename === requestedImage) return;
+    requestedImage = filename; image.hidden = true; message.hidden = false;
+    image.onload = function () { image.hidden = false; message.hidden = true; };
+    image.onerror = function () { image.hidden = true; message.hidden = false; };
+    image.src = "/stimulus-image/" + encodeURIComponent(filename);
+  }
   function rewardLabel(trial) {
     if (trial.reward_omission === true) return "OMITTED";
     if (trial.reward_delivered === true) return "DELIVERED";
@@ -23,6 +33,7 @@
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role);
+    setPreview(data.image);
     $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
     $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
     var last = data.last_trial, lastNode = $("last-trial");
