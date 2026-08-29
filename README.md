@@ -34,12 +34,12 @@ Open [http://localhost:8080](http://localhost:8080). From another machine on the
 
 The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:8080`. Override these with `--udp-host`, `--udp-port`, `--web-host`, `--web-port`, and `--stale-after-sec` (or the corresponding `RIG_MONITOR_*` environment variables).
 
-The browser polls `/api/state` at approximately 100 ms for responsive
-operator feedback. This improves the visual fidelity of short phases such as
-the 1.5 s stimulus epoch, but dashboard timing is still not a scientific
-timing measurement. The browser poll rate is independent of the Box151 UDP
-telemetry cadence and does not change the monitor's approximately five-second
-stale threshold.
+The browser polls `/api/state` approximately every 300 ms for responsive
+operator feedback while keeping CPU/browser load modest on the Raspberry Pi
+control machine. Dashboard timing remains observational and is not a
+scientific timing measurement. The browser poll rate is independent of the
+Box151 UDP telemetry cadence and does not change the monitor's approximately
+five-second stale threshold.
 
 ## Phase 2A local image preview
 

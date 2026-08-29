@@ -116,5 +116,5 @@
       })
       .then(function () { pollInFlight = false; });
   }
-  poll(); window.setInterval(poll, 100);
+  poll(); window.setInterval(poll, 300);
 }());
