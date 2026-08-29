@@ -76,7 +76,7 @@ The demo is a finite session and stops after `--total-trials` completed trials. 
 
 ## Water and behavioral performance
 
-The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Reward contact is contacted verified rewards divided by verified delivered rewards. Rewarded-cue anticipatory lick is the anticipatory count divided by completed rewarded-high cue trials; this denominator includes 18 normally rewarded plus 2 reward-omission trials per 20-trial block. Unrewarded-high cues are 20 trials per block, and low-probability unrewarded cues are 10 trials per block. All anticipatory rates use Box151's 0–1 s definition.
+The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Reward contact is contacted verified rewards divided by verified delivered rewards. Rewarded-cue anticipatory lick is the anticipatory count divided by completed rewarded-high cue trials. In a standard 50-trial block, the rewarded-high denominator contains 20 trials: 18 normally rewarded and 2 reward-omission trials. Unrewarded-high cues are 20 trials per block, and low-probability unrewarded cues are 10 trials per block. All anticipatory rates use Box151's 0–1 s definition.
 
 “Likely consumed” is an approximate contact-based estimate, not a direct fluid-intake measurement. Water volume and totals are displayed only when supplied by Box151. Dashboard timing remains observational and is not a scientific timing measurement.
 

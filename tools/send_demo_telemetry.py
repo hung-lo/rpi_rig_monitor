@@ -19,6 +19,10 @@ def demo_lick_times(trial):
     return list(LICK_PATTERNS[((trial - 1) // 3) % len(LICK_PATTERNS)])
 
 
+def is_anticipatory(lick_times):
+    return any(0.0 <= value < 1.0 for value in lick_times)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Send demo telemetry to rpi_rig_monitor")
     parser.add_argument("--host", default="127.0.0.1")
@@ -84,7 +88,7 @@ def main():
             time.sleep(1.0)
             # Generate licks first, then derive the operator-facing label from them.
             lick_times = demo_lick_times(trial)
-            anticipatory_lick = any(0.0 <= value <= 1.0 for value in lick_times)
+            anticipatory_lick = is_anticipatory(lick_times)
             reward_scheduled = role in ("rewarded_high_1", "reward_omission")
             reward_omission = role == "reward_omission"
             reward_delivered = reward_scheduled and not reward_omission
@@ -111,7 +115,9 @@ def main():
                  reward_omission=reward_omission, reward_delivered=reward_delivered,
                  reward_contacted=reward_contacted,
                  anticipatory_lick=anticipatory_lick, lick_times_sec=lick_times)
-            send("state", phase="ITI", **common)
+            iti_fields = dict(common)
+            iti_fields.update(cumulative_fields())
+            send("state", phase="ITI", **iti_fields)
             time.sleep(args.interval_sec)
     except KeyboardInterrupt:
         pass
