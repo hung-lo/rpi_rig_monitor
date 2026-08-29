@@ -100,7 +100,7 @@
     $("low-prob-cue-anticipatory-rate").textContent = formatFraction(data.task_low_probability_cue_anticipatory_lick_trials_session, data.task_low_probability_cue_trials_completed_session);
     $("water-delivered").textContent = formatWater(data.task_water_delivered_ul_session, false);
     $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
-    $("reward-volume").textContent = finiteNumber(data.reward_volume_ul_per_train) ? formatWater(data.reward_volume_ul_per_train, false) + "/train" : "—";
+    $("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
   }
   function trialSummary(trial) {
     var condition;

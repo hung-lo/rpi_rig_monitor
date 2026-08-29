@@ -1,6 +1,7 @@
 import unittest
 import os
 import tempfile
+from pathlib import Path
 
 from monitor.state import MonitorState
 from monitor.web import create_app
@@ -29,6 +30,11 @@ class WebTests(unittest.TestCase):
         self.assertEqual(state_response.status_code, 200)
         self.assertIn("connected", state_response.get_json())
         self.assertEqual(client.get("/health").get_json(), {"status": "ok", "udp_receiver": "ok"})
+
+    def test_reward_volume_display_has_no_train_suffix(self):
+        javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
+        self.assertIn('$("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);', javascript)
+        self.assertNotIn('formatWater(data.reward_volume_ul_per_train, false) + "/train"', javascript)
 
     def test_unhealthy_receiver_is_not_reported_as_healthy(self):
         app = create_app(MonitorState(), FailedReceiver())

@@ -9,14 +9,15 @@ h1 { margin: 0; font-size: clamp(1.9rem, 3vw, 2.6rem); letter-spacing: -.04em; }
 .status { display: flex; gap: 9px; align-items: center; font-weight: 700; font-size: .85rem; letter-spacing: .08em; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 12px currentColor; }
 .live { color: var(--accent); } .live .dot { background: var(--accent); } .stale { color: var(--warn); }
-.grid { display: grid; gap: 16px; margin-bottom: 16px; } .top-row { grid-template-columns: 2fr 1fr 2fr; align-items: stretch; }
+.grid { display: grid; gap: 16px; margin-bottom: 16px; } .top-row { grid-template-columns: 1.7fr 1.4fr 1.9fr; align-items: stretch; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin-bottom: 16px; }
 .top-row .card { margin-bottom: 0; }
 .preview { height: 280px; display: grid; place-items: center; border: 1px dashed #43515a; border-radius: 5px; color: var(--muted); background: #12191d; margin-bottom: 12px; overflow: hidden; }
 .preview img { display: block; width: 100%; height: 280px; object-fit: contain; }
 .filename { font-size: 1.2rem; overflow-wrap: anywhere; } .role { color: var(--accent); margin-top: 4px; }
-.metric-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--muted); } .metric-row:last-child { border: 0; }
-.metric-row strong { color: var(--text); font-weight: 600; text-align: right; }
+.metric-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .75rem; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--muted); } .metric-row:last-child { border: 0; }
+.metric-row > span { min-width: 0; }
+.metric-row strong { color: var(--text); font-weight: 600; text-align: right; white-space: nowrap; flex-shrink: 0; }
 .behavior-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .behavior-section .eyebrow { margin-bottom: 2px; }
 .behavior-section .metric-row { padding: 6px 0; font-size: .88rem; }
