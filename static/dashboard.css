@@ -17,6 +17,11 @@ h1 { margin: 0; font-size: clamp(1.9rem, 3vw, 2.6rem); letter-spacing: -.04em; }
 .filename { font-size: 1.2rem; overflow-wrap: anywhere; } .role { color: var(--accent); margin-top: 4px; }
 .metric-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--muted); } .metric-row:last-child { border: 0; }
 .metric-row strong { color: var(--text); font-weight: 600; text-align: right; }
+.behavior-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.behavior-section .eyebrow { margin-bottom: 2px; }
+.behavior-section .metric-row { padding: 6px 0; font-size: .88rem; }
+.behavior-section .secondary-metric { color: var(--muted); font-size: .82rem; }
+.behavior-help { margin: 10px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.35; }
 .summary-line { min-height: 2.9em; margin: 2px 0 14px; color: var(--text); font-size: 1.2rem; font-weight: 600; }
 .last-trial { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; } .last-trial strong { display: block; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; } .last-trial .value { margin-top: 2px; } .empty { color: var(--muted); }
 .lick-timeline-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

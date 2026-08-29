@@ -74,6 +74,14 @@ Telemetry sends only the image filename; the Control Pi browser preview serves t
 
 The demo is a finite session and stops after `--total-trials` completed trials. Use `--session-id` to select a stable ID; otherwise each invocation gets a UTC-based unique demo ID.
 
+## Water and behavioral performance
+
+The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Reward contact is contacted verified rewards divided by verified delivered rewards. Rewarded-cue anticipatory lick is the anticipatory count divided by completed rewarded-high cue trials; this denominator includes 18 normally rewarded plus 2 reward-omission trials per 20-trial block. Unrewarded-high cues are 20 trials per block, and low-probability unrewarded cues are 10 trials per block. All anticipatory rates use Box151's 0–1 s definition.
+
+“Likely consumed” is an approximate contact-based estimate, not a direct fluid-intake measurement. Water volume and totals are displayed only when supplied by Box151. Dashboard timing remains observational and is not a scientific timing measurement.
+
+The demo sender uses `3.0 µL/train` as synthetic data only; it is not the real calibrated animal reward volume.
+
 ## Telemetry
 
 Telemetry is UTF-8 JSON over UDP. Phase 1 recognizes `state`, `trial_complete`, and `session` messages. The backend retains up to 50 completed trials; the browser displays the newest 20. If no packet arrives for five seconds, the UI marks telemetry `STALE` while preserving the last known state.

@@ -19,7 +19,12 @@ class FailedReceiver(object):
 class WebTests(unittest.TestCase):
     def test_dashboard_and_json_routes(self):
         client = create_app(MonitorState(), HealthyReceiver()).test_client()
-        self.assertEqual(client.get("/").status_code, 200)
+        dashboard = client.get("/")
+        self.assertEqual(dashboard.status_code, 200)
+        for element_id in ("reward-contact-rate", "rewarded-cue-anticipatory-rate",
+                           "unrewarded-cue-anticipatory-rate", "low-prob-cue-anticipatory-rate",
+                           "water-delivered", "water-likely-consumed", "reward-volume"):
+            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
         state_response = client.get("/api/state")
         self.assertEqual(state_response.status_code, 200)
         self.assertIn("connected", state_response.get_json())

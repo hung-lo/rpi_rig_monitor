@@ -1,6 +1,6 @@
 import unittest
 
-from monitor.state import MonitorState
+from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS
 
 
 class MonitorStateTests(unittest.TestCase):
@@ -53,6 +53,36 @@ class MonitorStateTests(unittest.TestCase):
         state = MonitorState()
         self.assertFalse(state.update({"type": "diagnostic", "session_id": "ignored"}))
         self.assertIsNone(state.snapshot()["session_id"])
+
+    def test_cumulative_fields_are_retained_without_local_reconstruction(self):
+        state = MonitorState()
+        values = dict(SESSION_COUNTER_DEFAULTS)
+        values.update({"task_reward_trains_verified_session": 18,
+                       "task_reward_trains_contacted_session": 15,
+                       "task_water_delivered_ul_session": 54.0,
+                       "task_water_likely_consumed_ul_session": 45.0,
+                       "reward_volume_ul_per_train": 3.0})
+        packet = {"type": "trial_complete", "session_id": "s1"}
+        packet.update(values)
+        state.update(packet, received_at=1.0)
+        snapshot = state.snapshot(now=1.0)
+        for key, value in values.items():
+            self.assertEqual(snapshot[key], value)
+
+    def test_new_session_resets_cumulative_fields_before_partial_update(self):
+        state = MonitorState()
+        state.update({"type": "state", "session_id": "old",
+                      "task_reward_trains_verified_session": 18,
+                      "task_reward_trains_contacted_session": 15,
+                      "task_water_delivered_ul_session": 54.0,
+                      "task_water_likely_consumed_ul_session": 45.0,
+                      "reward_volume_ul_per_train": 3.0,
+                      "task_rewarded_high_cue_trials_completed_session": 20,
+                      "task_rewarded_high_cue_anticipatory_lick_trials_session": 17}, received_at=1.0)
+        state.update({"type": "session", "session_id": "new"}, received_at=2.0)
+        snapshot = state.snapshot(now=2.0)
+        for key, value in SESSION_COUNTER_DEFAULTS.items():
+            self.assertEqual(snapshot[key], value)
 
 
 if __name__ == "__main__":

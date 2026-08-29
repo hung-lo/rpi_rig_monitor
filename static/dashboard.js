@@ -13,6 +13,17 @@
     heading.textContent = label; content.className = "value"; content.textContent = text(value); wrapper.appendChild(heading); wrapper.appendChild(content); parent.appendChild(wrapper);
   }
   function addCell(row, value, className) { var cell = document.createElement("td"); cell.textContent = text(value); if (className) cell.className = className; row.appendChild(cell); }
+  function finiteNumber(value) { return typeof value === "number" && isFinite(value); }
+  function formatFraction(numerator, denominator) {
+    if (!finiteNumber(numerator) || !finiteNumber(denominator)) return "—";
+    if (denominator === 0) return "0 / 0 (—)";
+    return String(numerator) + " / " + String(denominator) + " (" + Math.round(100 * numerator / denominator) + "%)";
+  }
+  function formatWater(value, approximate) {
+    if (!finiteNumber(value)) return "—";
+    var formatted = value >= 1000 ? (value / 1000).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1") + " mL" : String(Number(value.toFixed(2))) + " µL";
+    return approximate ? "~" + formatted : formatted;
+  }
   var requestedImage = null;
   var SVG_NS = "http://www.w3.org/2000/svg";
   function svgElement(name, attributes, content) {
@@ -76,6 +87,21 @@
     if (trial.reward_scheduled === false) return "NO REWARD";
     return "UNKNOWN";
   }
+  function rewardContactLabel(trial) {
+    if (trial.reward_contacted === true) return "YES";
+    if (trial.reward_contacted === false && trial.reward_delivered === true) return "NO";
+    if (trial.reward_delivered === false || trial.reward_omission === true || trial.reward_scheduled === false) return "N/A";
+    return "UNKNOWN";
+  }
+  function renderBehavior(data) {
+    $("reward-contact-rate").textContent = formatFraction(data.task_reward_trains_contacted_session, data.task_reward_trains_verified_session);
+    $("rewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_rewarded_high_cue_anticipatory_lick_trials_session, data.task_rewarded_high_cue_trials_completed_session);
+    $("unrewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_unrewarded_high_cue_anticipatory_lick_trials_session, data.task_unrewarded_high_cue_trials_completed_session);
+    $("low-prob-cue-anticipatory-rate").textContent = formatFraction(data.task_low_probability_cue_anticipatory_lick_trials_session, data.task_low_probability_cue_trials_completed_session);
+    $("water-delivered").textContent = formatWater(data.task_water_delivered_ul_session, false);
+    $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
+    $("reward-volume").textContent = finiteNumber(data.reward_volume_ul_per_train) ? formatWater(data.reward_volume_ul_per_train, false) + "/train" : "—";
+  }
   function trialSummary(trial) {
     var condition;
     if (trial.reward_omission === true) condition = "Reward omission";
@@ -93,11 +119,12 @@
     setPreview(data.image);
     $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
     $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
+    renderBehavior(data);
     var last = data.last_trial, lastNode = $("last-trial"), summaryNode = $("last-summary");
     renderLickTimeline(last);
     clear(lastNode);
     if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; summaryNode.textContent = "No completed trial received"; } else {
-      lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
+      lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Reward contacted", rewardContactLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
     }
     var rows = (data.recent_trials || []).slice(0, 20), body = $("history"); clear(body);
     if (!rows.length) { var empty = document.createElement("tr"); var emptyCell = document.createElement("td"); emptyCell.colSpan = 5; emptyCell.className = "empty"; emptyCell.textContent = "No trial history"; empty.appendChild(emptyCell); body.appendChild(empty); return; }
