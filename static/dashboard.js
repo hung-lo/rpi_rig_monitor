@@ -103,6 +103,18 @@
     if (!rows.length) { var empty = document.createElement("tr"); var emptyCell = document.createElement("td"); emptyCell.colSpan = 5; emptyCell.className = "empty"; emptyCell.textContent = "No trial history"; empty.appendChild(emptyCell); body.appendChild(empty); return; }
     rows.forEach(function (trial) { var row = document.createElement("tr"); addCell(row, trial.trial); addCell(row, trial.stimulus_role); addCell(row, rewardLabel(trial)); addCell(row, trial.reward_omission ? "Yes" : "No"); addCell(row, trial.anticipatory_lick ? "YES" : "NO", trial.anticipatory_lick ? "yes" : "no"); body.appendChild(row); });
   }
-  function poll() { fetch("/api/state", { cache: "no-store" }).then(function (response) { return response.json(); }).then(render).catch(function () { $("connection").className = "status stale"; $("connection").lastElementChild.textContent = "STALE"; }); }
-  poll(); window.setInterval(poll, 500);
+  var pollInFlight = false;
+  function poll() {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    fetch("/api/state", { cache: "no-store" })
+      .then(function (response) { return response.json(); })
+      .then(render)
+      .catch(function () {
+        $("connection").className = "status stale";
+        $("connection").lastElementChild.textContent = "STALE";
+      })
+      .then(function () { pollInFlight = false; });
+  }
+  poll(); window.setInterval(poll, 100);
 }());

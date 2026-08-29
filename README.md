@@ -34,6 +34,13 @@ Open [http://localhost:8080](http://localhost:8080). From another machine on the
 
 The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:8080`. Override these with `--udp-host`, `--udp-port`, `--web-host`, `--web-port`, and `--stale-after-sec` (or the corresponding `RIG_MONITOR_*` environment variables).
 
+The browser polls `/api/state` at approximately 100 ms for responsive
+operator feedback. This improves the visual fidelity of short phases such as
+the 1.5 s stimulus epoch, but dashboard timing is still not a scientific
+timing measurement. The browser poll rate is independent of the Box151 UDP
+telemetry cadence and does not change the monitor's approximately five-second
+stale threshold.
+
 ## Phase 2A local image preview
 
 The dashboard can preview the current stimulus from a local copy of the natural-image library. The library is deliberately not included in this repository. On the current Control Pi, the default directory is `/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png`.
