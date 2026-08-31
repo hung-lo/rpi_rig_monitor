@@ -29,9 +29,12 @@ class WebTests(unittest.TestCase):
             self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
 
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
+        css = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.css").read_text()
+        self.assertIn(".preview img[hidden] { display: none; }", css)
         self.assertIn('empty.hidden = false', javascript)
         self.assertIn('message.hidden = false', javascript)
         self.assertIn('empty.hidden = true', javascript)
+        self.assertIn("var hasSession =", javascript)
         self.assertIn(b"No active stimulus", dashboard.data)
         self.assertIn(b"Stimulus image unavailable", dashboard.data)
         state_response = client.get("/api/state")

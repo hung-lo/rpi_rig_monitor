@@ -94,10 +94,18 @@
     return "UNKNOWN";
   }
   function renderBehavior(data) {
-    $("reward-contact-rate").textContent = formatFraction(data.task_reward_trains_contacted_session, data.task_reward_trains_verified_session);
-    $("rewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_rewarded_high_cue_anticipatory_lick_trials_session, data.task_rewarded_high_cue_trials_completed_session);
-    $("unrewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_unrewarded_high_cue_anticipatory_lick_trials_session, data.task_unrewarded_high_cue_trials_completed_session);
-    $("low-prob-cue-anticipatory-rate").textContent = formatFraction(data.task_low_probability_cue_anticipatory_lick_trials_session, data.task_low_probability_cue_trials_completed_session);
+    var hasSession = data.session_id !== null && data.session_id !== undefined && data.session_id !== "";
+    if (!hasSession) {
+      $("reward-contact-rate").textContent = "—";
+      $("rewarded-cue-anticipatory-rate").textContent = "—";
+      $("unrewarded-cue-anticipatory-rate").textContent = "—";
+      $("low-prob-cue-anticipatory-rate").textContent = "—";
+    } else {
+      $("reward-contact-rate").textContent = formatFraction(data.task_reward_trains_contacted_session, data.task_reward_trains_verified_session);
+      $("rewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_rewarded_high_cue_anticipatory_lick_trials_session, data.task_rewarded_high_cue_trials_completed_session);
+      $("unrewarded-cue-anticipatory-rate").textContent = formatFraction(data.task_unrewarded_high_cue_anticipatory_lick_trials_session, data.task_unrewarded_high_cue_trials_completed_session);
+      $("low-prob-cue-anticipatory-rate").textContent = formatFraction(data.task_low_probability_cue_anticipatory_lick_trials_session, data.task_low_probability_cue_trials_completed_session);
+    }
     $("water-delivered").textContent = formatWater(data.task_water_delivered_ul_session, false);
     $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
     $("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
