@@ -73,12 +73,12 @@
     }
   }
   function setPreview(filename) {
-    var image = $("preview-image"), message = $("preview-message");
-    if (!filename) { requestedImage = null; image.hidden = true; image.removeAttribute("src"); message.hidden = false; return; }
+    var image = $("preview-image"), message = $("preview-message"), empty = $("stimulus-preview-empty");
+    if (!filename) { requestedImage = null; image.hidden = true; image.removeAttribute("src"); message.hidden = true; empty.hidden = false; return; }
     if (filename === requestedImage) return;
-    requestedImage = filename; image.hidden = true; message.hidden = false;
-    image.onload = function () { image.hidden = false; message.hidden = true; };
-    image.onerror = function () { image.hidden = true; message.hidden = false; };
+    requestedImage = filename; image.hidden = true; message.hidden = true; empty.hidden = true;
+    image.onload = function () { if (requestedImage === filename) { image.hidden = false; message.hidden = true; empty.hidden = true; } };
+    image.onerror = function () { if (requestedImage === filename) { image.hidden = true; message.hidden = false; empty.hidden = true; } };
     image.src = "/stimulus-image/" + encodeURIComponent(filename);
   }
   function rewardLabel(trial) {

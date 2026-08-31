@@ -24,8 +24,16 @@ class WebTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         for element_id in ("reward-contact-rate", "rewarded-cue-anticipatory-rate",
                            "unrewarded-cue-anticipatory-rate", "low-prob-cue-anticipatory-rate",
-                           "water-delivered", "water-likely-consumed", "reward-volume"):
+                           "water-delivered", "water-likely-consumed", "reward-volume",
+                           "stimulus-preview-empty"):
             self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+
+        javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
+        self.assertIn('empty.hidden = false', javascript)
+        self.assertIn('message.hidden = false', javascript)
+        self.assertIn('empty.hidden = true', javascript)
+        self.assertIn(b"No active stimulus", dashboard.data)
+        self.assertIn(b"Stimulus image unavailable", dashboard.data)
         state_response = client.get("/api/state")
         self.assertEqual(state_response.status_code, 200)
         self.assertIn("connected", state_response.get_json())
