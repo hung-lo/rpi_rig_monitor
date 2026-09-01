@@ -122,10 +122,10 @@
     $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
     $("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
   }
-  function renderSpoutBehavior(data, isManual) {
+  function renderSpoutBehavior(data, isBaitView) {
     $("spout-phase").textContent = text(data.phase);
     $("spout-reward-progress").textContent = spoutRewardProgress(data);
-    $("spout-next-reward").textContent = isManual || data.phase === "COMPLETE" ? "—" : formatSeconds(data.next_reward_in_sec);
+    $("spout-next-reward").textContent = isBaitView || data.phase === "COMPLETE" ? "—" : formatSeconds(data.next_reward_in_sec);
     var retrievalDenominator = data.completed_training_reward_count;
     $("spout-retrieval-rate").textContent = formatSpoutFraction(data.retrieval_success_count_session, retrievalDenominator);
     var recentDenominator = finiteNumber(data.criterion_window_rewards) ? data.criterion_window_rewards : 20;
@@ -150,15 +150,15 @@
     $("spout-training-status").textContent = data.manual_start_requested === true ? "Starting after bait cycle" : data.phase === "MANUAL_START_DELAY" ? "Starting" : "Waiting for operator";
   }
   function spoutContact(value) { return value === true ? "YES" : value === false ? "NO" : "—"; }
-  function renderSpoutLast(data, isManual) {
+  function renderSpoutLast(data, isBaitView) {
     var last = data.last_trial;
     var hasBait = finiteNumber(data.completed_bait_reward_count) && data.completed_bait_reward_count > 0;
-    setHidden("spout-last-bait", !isManual || !hasBait);
-    setHidden("spout-last-reward", isManual || !last);
-    var hasLast = isManual ? hasBait : !!last;
+    setHidden("spout-last-bait", !isBaitView || !hasBait);
+    setHidden("spout-last-reward", isBaitView || !last);
+    var hasLast = isBaitView ? hasBait : !!last;
     setHidden("spout-last-empty", hasLast);
-    $("spout-last-empty").textContent = isManual ? "No completed bait reward" : "No completed reward";
-    if (isManual) {
+    $("spout-last-empty").textContent = isBaitView ? "No completed bait reward" : "No completed reward";
+    if (isBaitView) {
       $("spout-last-bait-index").textContent = formatInteger(data.bait_index !== null && data.bait_index !== undefined ? data.bait_index : data.completed_bait_reward_count);
       $("spout-last-bait-contact").textContent = spoutContact(data.last_bait_contacted);
       $("spout-last-bait-latency").textContent = formatSeconds(data.last_bait_first_lick_latency_sec);
@@ -198,16 +198,20 @@
   }
   function render(data) {
     var isSpout = data.protocol === "spout_training";
-    var isManual = isSpout && (data.phase === "MANUAL_BAIT" || data.manual_bait_active === true);
+    var isBaitView = isSpout && (data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY" || data.manual_bait_active === true);
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
     setHidden("reward-conditioning-last-view", isSpout); setHidden("spout-last-view", !isSpout);
+    if (isSpout) {
+      setHidden("spout-behavior-scheduled", isBaitView);
+      setHidden("spout-behavior-manual", !isBaitView);
+    }
     $("session-title").textContent = isSpout ? "SPOUT TRAINING" : "SESSION";
-    $("last-panel-title").textContent = isSpout ? (isManual ? "LAST BAIT" : "LAST REWARD") : "LAST TRIAL";
+    $("last-panel-title").textContent = isSpout ? (isBaitView ? "LAST BAIT" : "LAST REWARD") : "LAST TRIAL";
     if (isSpout) {
       $("image").textContent = "—"; $("stimulus-role").textContent = "—"; setPreview(null);
-      renderSpoutBehavior(data, isManual); renderSpoutLast(data, isManual);
+      renderSpoutBehavior(data, isBaitView); renderSpoutLast(data, isBaitView);
     } else {
       $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role); setPreview(data.image);
       $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
