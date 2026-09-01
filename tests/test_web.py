@@ -27,6 +27,12 @@ class WebTests(unittest.TestCase):
                            "water-delivered", "water-likely-consumed", "reward-volume",
                            "stimulus-preview-empty"):
             self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+        for element_id in ("spout-reward-progress", "spout-retrieval-rate", "spout-recent20",
+                           "spout-criterion", "spout-training-water", "spout-bait-water",
+                           "spout-total-water", "spout-total-licks", "spout-bait-drops",
+                           "spout-bait-contact", "spout-recent-licks", "spout-last-lick",
+                           "spout-lick-status", "last-panel-title", "history-title"):
+            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
 
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
         css = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.css").read_text()
@@ -35,6 +41,8 @@ class WebTests(unittest.TestCase):
         self.assertIn('message.hidden = false', javascript)
         self.assertIn('empty.hidden = true', javascript)
         self.assertIn("var hasSession =", javascript)
+        self.assertIn('data.protocol === "spout_training"', javascript)
+        self.assertIn('window.setInterval(poll, 300)', javascript)
         self.assertIn(b"No active stimulus", dashboard.data)
         self.assertIn(b"Stimulus image unavailable", dashboard.data)
         state_response = client.get("/api/state")

@@ -24,6 +24,18 @@
     var formatted = value >= 1000 ? (value / 1000).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1") + " mL" : String(Number(value.toFixed(2))) + " µL";
     return approximate ? "~" + formatted : formatted;
   }
+  function setHidden(id, hidden) { $(id).hidden = hidden; }
+  function formatInteger(value) { return finiteNumber(value) ? String(value) : "—"; }
+  function formatSeconds(value) { return finiteNumber(value) ? String(Number(value.toFixed(1))) + " s" : "—"; }
+  function formatAge(value) { return finiteNumber(value) ? String(Number(value.toFixed(2))) + " s ago" : "—"; }
+  function formatSpoutFraction(numerator, denominator) {
+    if (!finiteNumber(numerator) || !finiteNumber(denominator) || denominator === 0) return "—";
+    return formatFraction(numerator, denominator);
+  }
+  function spoutRewardProgress(data) {
+    if (finiteNumber(data.maximum_training_rewards)) return (finiteNumber(data.training_reward_index) ? data.training_reward_index : "—") + " / " + data.maximum_training_rewards;
+    return formatInteger(data.training_reward_index);
+  }
   var requestedImage = null;
   var SVG_NS = "http://www.w3.org/2000/svg";
   function svgElement(name, attributes, content) {
@@ -93,7 +105,7 @@
     if (trial.reward_delivered === false || trial.reward_omission === true || trial.reward_scheduled === false) return "N/A";
     return "UNKNOWN";
   }
-  function renderBehavior(data) {
+  function renderRewardBehavior(data) {
     var hasSession = data.session_id !== null && data.session_id !== undefined && data.session_id !== "";
     if (!hasSession) {
       $("reward-contact-rate").textContent = "—";
@@ -110,6 +122,70 @@
     $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
     $("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
   }
+  function renderSpoutBehavior(data, isManual) {
+    $("spout-phase").textContent = text(data.phase);
+    $("spout-reward-progress").textContent = spoutRewardProgress(data);
+    $("spout-next-reward").textContent = isManual || data.phase === "COMPLETE" ? "—" : formatSeconds(data.next_reward_in_sec);
+    var retrievalDenominator = data.completed_training_reward_count;
+    $("spout-retrieval-rate").textContent = formatSpoutFraction(data.retrieval_success_count_session, retrievalDenominator);
+    var recentDenominator = finiteNumber(data.criterion_window_rewards) ? data.criterion_window_rewards : 20;
+    $("spout-recent20").textContent = data.criterion_evaluable ? formatSpoutFraction(data.recent_20_success_count, recentDenominator) : "Not yet evaluable";
+    var criterion = data.training_passed === true ? "PASS" : (!data.criterion_evaluable ? "NOT YET" : data.phase === "COMPLETE" ? "NOT REACHED" : "NOT YET");
+    $("spout-criterion").textContent = criterion;
+    setHidden("spout-pass-reward-row", !(data.training_passed === true && finiteNumber(data.training_pass_reward_index)));
+    $("spout-pass-reward").textContent = formatInteger(data.training_pass_reward_index);
+    $("spout-training-water").textContent = formatWater(data.task_water_delivered_ul_session, false);
+    $("spout-bait-water").textContent = formatWater(data.bait_water_ul_session, false);
+    $("spout-total-water").textContent = formatWater(data.total_water_ul_session, false);
+    $("spout-reward-volume").textContent = formatWater(data.reward_volume_ul, false);
+    $("spout-total-licks").textContent = formatInteger(data.total_lick_onset_count_session);
+    var baitDenominator = data.completed_bait_reward_count;
+    $("spout-bait-drops").textContent = finiteNumber(data.bait_total) ? formatInteger(data.completed_bait_reward_count) + " / " + data.bait_total : formatInteger(data.completed_bait_reward_count);
+    $("spout-bait-contact").textContent = formatSpoutFraction(data.bait_contacted_count_session, baitDenominator);
+    $("spout-manual-bait-water").textContent = formatWater(data.bait_water_ul_session, false);
+    $("spout-recent-licks").textContent = formatInteger(data.recent_lick_count_2s);
+    $("spout-last-lick").textContent = formatAge(data.last_lick_age_sec);
+    $("spout-lick-status").textContent = data.licking_active === true ? "LICKING" : "quiet";
+    $("spout-lick-status").className = data.licking_active === true ? "licking" : "quiet";
+    $("spout-training-status").textContent = data.manual_start_requested === true ? "Starting after bait cycle" : data.phase === "MANUAL_START_DELAY" ? "Starting" : "Waiting for operator";
+  }
+  function spoutContact(value) { return value === true ? "YES" : value === false ? "NO" : "—"; }
+  function renderSpoutLast(data, isManual) {
+    var last = data.last_trial;
+    var hasBait = finiteNumber(data.completed_bait_reward_count) && data.completed_bait_reward_count > 0;
+    setHidden("spout-last-bait", !isManual || !hasBait);
+    setHidden("spout-last-reward", isManual || !last);
+    var hasLast = isManual ? hasBait : !!last;
+    setHidden("spout-last-empty", hasLast);
+    $("spout-last-empty").textContent = isManual ? "No completed bait reward" : "No completed reward";
+    if (isManual) {
+      $("spout-last-bait-index").textContent = formatInteger(data.bait_index !== null && data.bait_index !== undefined ? data.bait_index : data.completed_bait_reward_count);
+      $("spout-last-bait-contact").textContent = spoutContact(data.last_bait_contacted);
+      $("spout-last-bait-latency").textContent = formatSeconds(data.last_bait_first_lick_latency_sec);
+    } else if (last) {
+      $("spout-last-reward-index").textContent = formatInteger(last.training_reward_index !== undefined ? last.training_reward_index : last.trial);
+      $("spout-last-reward-contact").textContent = spoutContact(last.reward_contacted);
+      $("spout-last-reward-latency").textContent = formatSeconds(last.first_lick_latency_sec);
+      $("spout-last-licks-05").textContent = formatInteger(last.lick_count_reward_to_0p5_sec);
+      $("spout-last-licks-10").textContent = formatInteger(last.lick_count_reward_to_1p0_sec);
+      $("spout-last-licks-25").textContent = formatInteger(last.lick_count_reward_to_2p5_sec);
+    }
+  }
+  function renderHistory(data, isSpout) {
+    var body = $("history");
+    clear(body);
+    setHidden("reward-conditioning-history-head", isSpout);
+    setHidden("spout-history-head", !isSpout);
+    $("history-title").textContent = isSpout ? "RECENT REWARDS" : "RECENT TRIALS";
+    var rows = (data.recent_trials || []).slice(0, 20);
+    if (!rows.length) { var empty = document.createElement("tr"), emptyCell = document.createElement("td"); emptyCell.colSpan = 5; emptyCell.className = "empty"; emptyCell.textContent = isSpout ? "No scheduled rewards" : "No trial history"; empty.appendChild(emptyCell); body.appendChild(empty); return; }
+    rows.forEach(function (trial) {
+      var row = document.createElement("tr");
+      if (isSpout) { addCell(row, trial.training_reward_index !== undefined ? trial.training_reward_index : trial.trial); addCell(row, spoutContact(trial.reward_contacted)); addCell(row, formatSeconds(trial.first_lick_latency_sec)); addCell(row, formatInteger(trial.lick_count_reward_to_0p5_sec)); addCell(row, formatInteger(trial.lick_count_reward_to_2p5_sec)); }
+      else { addCell(row, trial.trial); addCell(row, trial.stimulus_role); addCell(row, rewardLabel(trial)); addCell(row, trial.reward_omission ? "Yes" : "No"); addCell(row, trial.anticipatory_lick ? "YES" : "NO", trial.anticipatory_lick ? "yes" : "no"); }
+      body.appendChild(row);
+    });
+  }
   function trialSummary(trial) {
     var condition;
     if (trial.reward_omission === true) condition = "Reward omission";
@@ -121,22 +197,30 @@
     return condition + " + " + (trial.reward_scheduled === false ? (trial.anticipatory_lick ? "lick" : "no lick") : (trial.anticipatory_lick ? "anticipatory lick" : "no anticipatory lick"));
   }
   function render(data) {
+    var isSpout = data.protocol === "spout_training";
+    var isManual = isSpout && (data.phase === "MANUAL_BAIT" || data.manual_bait_active === true);
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
-    $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role);
-    setPreview(data.image);
-    $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
-    $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
-    renderBehavior(data);
+    setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
+    setHidden("reward-conditioning-last-view", isSpout); setHidden("spout-last-view", !isSpout);
+    $("session-title").textContent = isSpout ? "SPOUT TRAINING" : "SESSION";
+    $("last-panel-title").textContent = isSpout ? (isManual ? "LAST BAIT" : "LAST REWARD") : "LAST TRIAL";
+    if (isSpout) {
+      $("image").textContent = "—"; $("stimulus-role").textContent = "—"; setPreview(null);
+      renderSpoutBehavior(data, isManual); renderSpoutLast(data, isManual);
+    } else {
+      $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role); setPreview(data.image);
+      $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
+      $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
+      renderRewardBehavior(data);
+      renderLickTimeline(data.last_trial);
+    }
     var last = data.last_trial, lastNode = $("last-trial"), summaryNode = $("last-summary");
-    renderLickTimeline(last);
     clear(lastNode);
     if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; summaryNode.textContent = "No completed trial received"; } else {
       lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Reward contacted", rewardContactLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
     }
-    var rows = (data.recent_trials || []).slice(0, 20), body = $("history"); clear(body);
-    if (!rows.length) { var empty = document.createElement("tr"); var emptyCell = document.createElement("td"); emptyCell.colSpan = 5; emptyCell.className = "empty"; emptyCell.textContent = "No trial history"; empty.appendChild(emptyCell); body.appendChild(empty); return; }
-    rows.forEach(function (trial) { var row = document.createElement("tr"); addCell(row, trial.trial); addCell(row, trial.stimulus_role); addCell(row, rewardLabel(trial)); addCell(row, trial.reward_omission ? "Yes" : "No"); addCell(row, trial.anticipatory_lick ? "YES" : "NO", trial.anticipatory_lick ? "yes" : "no"); body.appendChild(row); });
+    renderHistory(data, isSpout);
   }
   var pollInFlight = false;
   function poll() {

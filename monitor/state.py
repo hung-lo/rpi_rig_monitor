@@ -21,6 +21,45 @@ SESSION_COUNTER_DEFAULTS = {
     "task_low_probability_cue_anticipatory_lick_trials_session": 0,
 }
 
+SPOUT_SESSION_DEFAULTS = {
+    "maximum_training_rewards": None,
+    "training_reward_index": None,
+    "attempted_training_reward_count": 0,
+    "completed_training_reward_count": 0,
+    "retrieval_success_count_session": 0,
+    "retrieval_failure_count_session": 0,
+    "recent_20_success_count": None,
+    "recent_20_success_fraction": None,
+    "criterion_evaluable": False,
+    "training_passed": False,
+    "training_pass_reward_index": None,
+    "criterion_window_rewards": None,
+    "criterion_success_fraction": None,
+    "reward_volume_ul": None,
+    "task_water_delivered_ul_session": None,
+    "bait_water_ul_session": None,
+    "total_water_ul_session": None,
+    "total_lick_onset_count_session": 0,
+    "bait_mode": None,
+    "manual_bait_active": False,
+    "bait_index": None,
+    "bait_total": None,
+    "completed_bait_reward_count": 0,
+    "completed_bait_suction_count": 0,
+    "bait_contacted_count_session": 0,
+    "last_bait_contacted": None,
+    "last_bait_first_lick_latency_sec": None,
+    "recent_lick_count_2s": 0,
+    "last_lick_age_sec": None,
+    "licking_active": False,
+    "bait_reward_ready": False,
+    "manual_start_requested": False,
+    "manual_abort_requested": False,
+    "manual_bait_max_water_ul": None,
+    "next_reward_in_sec": None,
+    "planned_remaining_eta_sec": None,
+}
+
 
 class MonitorState(object):
     """Holds the latest telemetry and a bounded trial history."""
@@ -45,6 +84,7 @@ class MonitorState(object):
             "recent_trials": [],
         }
         self._data.update(copy.deepcopy(SESSION_COUNTER_DEFAULTS))
+        self._data.update(copy.deepcopy(SPOUT_SESSION_DEFAULTS))
         self._recent: Deque[Dict[str, Any]] = deque(maxlen=history_limit)
 
     def update(self, packet: Dict[str, Any], received_at: Optional[float] = None) -> bool:
@@ -64,12 +104,16 @@ class MonitorState(object):
                             "image", "stimulus_role", "eta_sec", "last_trial", "recent_trials"):
                     self._data[key] = [] if key == "recent_trials" else None
                 self._data.update(copy.deepcopy(SESSION_COUNTER_DEFAULTS))
+                self._data.update(copy.deepcopy(SPOUT_SESSION_DEFAULTS))
 
             for key in ("protocol", "session_id", "phase", "trial", "total_trials",
                         "block", "total_blocks", "image", "stimulus_role", "eta_sec"):
                 if key in packet:
                     self._data[key] = copy.deepcopy(packet[key])
             for key in SESSION_COUNTER_DEFAULTS:
+                if key in packet:
+                    self._data[key] = copy.deepcopy(packet[key])
+            for key in SPOUT_SESSION_DEFAULTS:
                 if key in packet:
                     self._data[key] = copy.deepcopy(packet[key])
 

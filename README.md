@@ -82,6 +82,18 @@ The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied b
 
 The demo sender uses `3.0 µL/train` as synthetic data only; it is not the real calibrated animal reward volume.
 
+## Spout-training telemetry
+
+When Box151 sends `protocol: spout_training`, the dashboard switches to a read-only spout-training view. Manual bait shows bait water and live lick feedback; scheduled spout rewards show retrieval, criterion, and separate training/bait/total water values. Manual bait rewards are not added to the scheduled reward history. The browser cannot deliver water, start training, or abort training, and all dashboard timing is operator feedback only.
+
+Run the deterministic local demo with:
+
+```bash
+python tools/send_spout_demo_telemetry.py
+```
+
+It exercises manual bait, five scheduled reward episodes, and a final `COMPLETE` state without requiring hardware. The monitor displays Box151-supplied counters and does not reconstruct cumulative values from UDP packet history.
+
 ## Telemetry
 
 Telemetry is UTF-8 JSON over UDP. Phase 1 recognizes `state`, `trial_complete`, and `session` messages. The backend retains up to 50 completed trials; the browser displays the newest 20. If no packet arrives for five seconds, the UI marks telemetry `STALE` while preserving the last known state.

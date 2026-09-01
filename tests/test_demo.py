@@ -5,6 +5,7 @@ import sys
 from unittest import mock
 
 from tools import send_demo_telemetry
+from tools import send_spout_demo_telemetry
 
 
 class DemoTelemetryTests(unittest.TestCase):
@@ -45,6 +46,31 @@ class DemoTelemetryTests(unittest.TestCase):
         self.assertEqual(iti["task_reward_trains_verified_session"], completed["task_reward_trains_verified_session"])
         self.assertEqual(iti["task_reward_trains_contacted_session"], completed["task_reward_trains_contacted_session"])
         self.assertEqual(iti["task_rewarded_high_cue_trials_completed_session"], completed["task_rewarded_high_cue_trials_completed_session"])
+
+    def test_spout_demo_has_manual_bait_and_finite_scheduled_flow(self):
+        class FakeSocket(object):
+            def __init__(self):
+                self.packets = []
+
+            def sendto(self, payload, _address):
+                self.packets.append(json.loads(payload.decode("utf-8")))
+
+            def close(self):
+                pass
+
+        fake_socket = FakeSocket()
+        argv = ["send_spout_demo_telemetry.py", "--interval-sec", "0", "--session-id", "spout_test"]
+        with mock.patch.object(send_spout_demo_telemetry.socket, "socket", return_value=fake_socket), \
+                mock.patch.object(send_spout_demo_telemetry.time, "sleep"), \
+                mock.patch.object(sys, "argv", argv):
+            send_spout_demo_telemetry.main()
+        self.assertEqual(fake_socket.packets[0]["protocol"], "spout_training")
+        self.assertIn("MANUAL_BAIT", [packet.get("phase") for packet in fake_socket.packets])
+        completed = [packet for packet in fake_socket.packets if packet["type"] == "trial_complete"]
+        self.assertEqual(len(completed), 5)
+        final = fake_socket.packets[-1]
+        self.assertEqual(final["phase"], "COMPLETE")
+        self.assertEqual(final["total_water_ul_session"], 40.0)
 
 
 if __name__ == "__main__":

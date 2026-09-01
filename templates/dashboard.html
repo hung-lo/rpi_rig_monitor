@@ -25,11 +25,12 @@
         <div class="role" id="stimulus-role">—</div>
       </article>
       <article class="card session-card">
-        <p class="eyebrow">SESSION</p>
-        <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
-        <div class="metric-row"><span>Trial</span><strong id="trial">—</strong></div>
-        <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
-        <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
+        <p class="eyebrow" id="session-title">SESSION</p>
+        <div id="reward-conditioning-session-view">
+          <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
+          <div class="metric-row"><span>Trial</span><strong id="trial">—</strong></div>
+          <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
+          <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
         <div class="behavior-section">
           <p class="eyebrow">WATER / BEHAVIOR</p>
           <div class="metric-row"><span>Reward contact</span><strong id="reward-contact-rate">—</strong></div>
@@ -41,23 +42,71 @@
           <div class="metric-row"><span>Reward volume</span><strong id="reward-volume">—</strong></div>
           <p class="behavior-help">Reward contact is the fraction of verified delivered rewards with a lick before suction. Cue anticipatory rates use completed trials and the 0–1 s pre-reward window; omissions remain in the rewarded-cue denominator. Likely consumed is a contact-based estimate, not direct fluid-intake measurement.</p>
         </div>
+        </div>
+        <div id="spout-session-view" class="protocol-view" hidden>
+          <div class="metric-row"><span>Phase</span><strong id="spout-phase">—</strong></div>
+          <div class="metric-row"><span>Reward</span><strong id="spout-reward-progress">—</strong></div>
+          <div class="metric-row"><span>Next reward</span><strong id="spout-next-reward">—</strong></div>
+          <div id="spout-behavior-scheduled" class="behavior-section">
+            <p class="eyebrow">WATER / BEHAVIOR</p>
+            <div class="metric-row"><span>Retrieval success</span><strong id="spout-retrieval-rate">—</strong></div>
+            <div class="metric-row"><span>Recent-20</span><strong id="spout-recent20">—</strong></div>
+            <div class="metric-row"><span>Criterion</span><strong id="spout-criterion">—</strong></div>
+            <div class="metric-row" id="spout-pass-reward-row" hidden><span>Pass reward</span><strong id="spout-pass-reward">—</strong></div>
+            <div class="metric-row"><span>Training water</span><strong id="spout-training-water">—</strong></div>
+            <div class="metric-row"><span>Bait water</span><strong id="spout-bait-water">—</strong></div>
+            <div class="metric-row"><span>Total water</span><strong id="spout-total-water">—</strong></div>
+            <div class="metric-row"><span>Reward volume</span><strong id="spout-reward-volume">—</strong></div>
+            <div class="metric-row"><span>Total licks</span><strong id="spout-total-licks">—</strong></div>
+          </div>
+          <div id="spout-behavior-manual" class="behavior-section" hidden>
+            <p class="eyebrow">WATER / BEHAVIOR</p>
+            <div class="metric-row"><span>Bait drops</span><strong id="spout-bait-drops">—</strong></div>
+            <div class="metric-row"><span>Bait contacted</span><strong id="spout-bait-contact">—</strong></div>
+            <div class="metric-row"><span>Bait water</span><strong id="spout-manual-bait-water">—</strong></div>
+            <div class="metric-row"><span>Licks last 2 s</span><strong id="spout-recent-licks">—</strong></div>
+            <div class="metric-row"><span>Last lick</span><strong id="spout-last-lick">—</strong></div>
+            <div class="metric-row"><span>Status</span><strong id="spout-lick-status">quiet</strong></div>
+            <div class="metric-row"><span>Training</span><strong id="spout-training-status">Waiting for operator</strong></div>
+          </div>
+          <p class="behavior-help">Retrieval and water values come from Box151 telemetry. Lick status is operator feedback; dashboard timing is not scientific timing.</p>
+        </div>
       </article>
       <article class="card last-trial-card">
-        <p class="eyebrow">LAST TRIAL</p>
-        <div id="last-summary" class="summary-line">No completed trial received</div>
-        <div id="last-trial" class="last-trial empty">No completed trial received</div>
-        <div class="lick-timeline-section">
+        <p class="eyebrow" id="last-panel-title">LAST TRIAL</p>
+        <div id="reward-conditioning-last-view">
+          <div id="last-summary" class="summary-line">No completed trial received</div>
+          <div id="last-trial" class="last-trial empty">No completed trial received</div>
+          <div class="lick-timeline-section">
           <div class="lick-timeline-label">LICK TIMELINE</div>
           <svg id="lick-timeline" viewBox="0 0 600 195" role="img" aria-label="Last-trial lick timeline"></svg>
+          </div>
+        </div>
+        <div id="spout-last-view" class="protocol-view" hidden>
+          <div id="spout-last-empty" class="summary-line">No completed bait reward</div>
+          <div id="spout-last-bait" class="spout-last-details" hidden>
+            <div class="metric-row"><span>Bait</span><strong id="spout-last-bait-index">—</strong></div>
+            <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-bait-contact">—</strong></div>
+            <div class="metric-row"><span>First lick</span><strong id="spout-last-bait-latency">—</strong></div>
+          </div>
+          <div id="spout-last-reward" class="spout-last-details" hidden>
+            <div class="metric-row"><span>Reward</span><strong id="spout-last-reward-index">—</strong></div>
+            <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-reward-contact">—</strong></div>
+            <div class="metric-row"><span>First lick latency</span><strong id="spout-last-reward-latency">—</strong></div>
+            <div class="metric-row"><span>Licks 0–0.5 s</span><strong id="spout-last-licks-05">—</strong></div>
+            <div class="metric-row"><span>Licks 0–1.0 s</span><strong id="spout-last-licks-10">—</strong></div>
+            <div class="metric-row"><span>Licks 0–2.5 s</span><strong id="spout-last-licks-25">—</strong></div>
+          </div>
         </div>
       </article>
     </section>
 
     <section class="card history-card">
-      <div class="section-heading"><p class="eyebrow">RECENT TRIALS</p><span>Newest first · up to 20 shown</span></div>
+      <div class="section-heading"><p class="eyebrow" id="history-title">RECENT TRIALS</p><span>Newest first · up to 20 shown</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
+          <thead id="reward-conditioning-history-head"><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
+          <thead id="spout-history-head" hidden><tr><th>Reward</th><th>Contacted</th><th>First lick</th><th>Licks 0–0.5 s</th><th>Licks 0–2.5 s</th></tr></thead>
           <tbody id="history"><tr><td colspan="5" class="empty">No trial history</td></tr></tbody>
         </table>
       </div>

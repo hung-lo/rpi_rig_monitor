@@ -1,6 +1,6 @@
 import unittest
 
-from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS
+from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS, SPOUT_SESSION_DEFAULTS
 
 
 class MonitorStateTests(unittest.TestCase):
@@ -83,6 +83,36 @@ class MonitorStateTests(unittest.TestCase):
         snapshot = state.snapshot(now=2.0)
         for key, value in SESSION_COUNTER_DEFAULTS.items():
             self.assertEqual(snapshot[key], value)
+
+    def test_spout_fields_are_retained(self):
+        state = MonitorState()
+        values = {
+            "maximum_training_rewards": 60, "training_reward_index": 17,
+            "completed_bait_reward_count": 19, "bait_water_ul_session": 95.0,
+            "recent_lick_count_2s": 1, "last_lick_age_sec": 0.12,
+            "licking_active": True, "retrieval_success_count_session": 13,
+            "completed_training_reward_count": 17, "recent_20_success_count": 16,
+            "criterion_evaluable": True, "training_passed": True,
+            "training_pass_reward_index": 23, "task_water_delivered_ul_session": 54.0,
+            "total_water_ul_session": 149.0,
+        }
+        packet = {"type": "state", "protocol": "spout_training", "session_id": "spout1", "phase": "MANUAL_BAIT"}
+        packet.update(values)
+        state.update(packet, received_at=1.0)
+        snapshot = state.snapshot(now=1.0)
+        for key, value in values.items():
+            self.assertEqual(snapshot[key], value)
+
+    def test_new_session_resets_spout_fields(self):
+        state = MonitorState()
+        state.update({"type": "state", "protocol": "spout_training", "session_id": "old",
+                      "completed_bait_reward_count": 19, "recent_lick_count_2s": 4,
+                      "training_passed": True, "total_water_ul_session": 149.0}, received_at=1.0)
+        state.update({"type": "session", "protocol": "reward_conditioning", "session_id": "new"}, received_at=2.0)
+        snapshot = state.snapshot(now=2.0)
+        for key, value in SPOUT_SESSION_DEFAULTS.items():
+            self.assertEqual(snapshot[key], value)
+        self.assertEqual(snapshot["protocol"], "reward_conditioning")
 
 
 if __name__ == "__main__":
