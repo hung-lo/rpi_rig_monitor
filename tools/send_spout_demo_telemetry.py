@@ -72,7 +72,9 @@ def main():
                            "task_water_delivered_ul_session": completed * reward_volume,
                            "total_water_ul_session": bait_water + completed * reward_volume,
                            "recent_lick_count_2s": 0, "last_lick_age_sec": 1.2,
-                           "licking_active": False, "total_lick_onset_count_session": 4})
+                           "licking_active": False, "total_lick_onset_count_session": 4,
+                           "manual_bait_active": False, "manual_start_requested": False,
+                           "manual_abort_requested": False, "bait_reward_ready": False})
             send("state", **common, next_reward_in_sec=0.8)
             time.sleep(args.interval_sec)
             trial_packet = dict(common)
@@ -93,7 +95,9 @@ def main():
                       "task_water_delivered_ul_session": 25.0,
                       "total_water_ul_session": 40.0,
                       "recent_lick_count_2s": 0, "last_lick_age_sec": 3.0,
-                      "licking_active": False})
+                      "licking_active": False, "manual_bait_active": False,
+                      "manual_start_requested": False, "manual_abort_requested": False,
+                      "bait_reward_ready": False})
         send("state", **final, next_reward_in_sec=None)
     except KeyboardInterrupt:
         pass

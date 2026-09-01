@@ -68,9 +68,20 @@ class DemoTelemetryTests(unittest.TestCase):
         self.assertIn("MANUAL_BAIT", [packet.get("phase") for packet in fake_socket.packets])
         completed = [packet for packet in fake_socket.packets if packet["type"] == "trial_complete"]
         self.assertEqual(len(completed), 5)
+        scheduled = [packet for packet in fake_socket.packets if packet.get("phase") in ("WAITING_REWARD", "REWARD")]
+        self.assertTrue(scheduled)
+        for packet in scheduled:
+            self.assertFalse(packet["manual_bait_active"])
+            self.assertFalse(packet["manual_start_requested"])
+            self.assertFalse(packet["manual_abort_requested"])
+            self.assertFalse(packet["bait_reward_ready"])
         final = fake_socket.packets[-1]
         self.assertEqual(final["phase"], "COMPLETE")
         self.assertEqual(final["total_water_ul_session"], 40.0)
+        self.assertFalse(final["manual_bait_active"])
+        self.assertFalse(final["manual_start_requested"])
+        self.assertFalse(final["manual_abort_requested"])
+        self.assertFalse(final["bait_reward_ready"])
 
 
 if __name__ == "__main__":

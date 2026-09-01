@@ -198,7 +198,8 @@
   }
   function render(data) {
     var isSpout = data.protocol === "spout_training";
-    var isBaitView = isSpout && (data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY" || data.manual_bait_active === true);
+    var isBaitPhase = data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY";
+    var isBaitView = isSpout && (isBaitPhase || (!data.phase && data.manual_bait_active === true));
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
