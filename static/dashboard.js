@@ -96,6 +96,7 @@
   function rewardLabel(trial) {
     if (trial.reward_omission === true) return "OMITTED";
     if (trial.reward_delivered === true) return "DELIVERED";
+    if (trial.reward_eligible === false) return "NO REWARD";
     if (trial.reward_scheduled === false) return "NO REWARD";
     return "UNKNOWN";
   }
@@ -121,6 +122,34 @@
     $("water-delivered").textContent = formatWater(data.task_water_delivered_ul_session, false);
     $("water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
     $("reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
+  }
+  function protocolFraction(numerator, denominator) {
+    return finiteNumber(numerator) && finiteNumber(denominator) && denominator > 0 ? formatFraction(numerator, denominator) : "—";
+  }
+  function protocolRate(numerator, denominator) {
+    return finiteNumber(numerator) && finiteNumber(denominator) && denominator > 0 ? numerator / denominator : null;
+  }
+  function renderPartialReversalBehavior(data) {
+    var plusRate = protocolRate(data.task_r_plus_cue_anticipatory_lick_trials_session, data.task_r_plus_cue_trials_completed_session);
+    var minusRate = protocolRate(data.task_r_minus_cue_anticipatory_lick_trials_session, data.task_r_minus_cue_trials_completed_session);
+    $("new-reward-contact-rate").textContent = formatFraction(data.task_reward_trains_contacted_session, data.task_reward_trains_verified_session);
+    $("r-plus-anticipatory-rate").textContent = protocolFraction(data.task_r_plus_cue_anticipatory_lick_trials_session, data.task_r_plus_cue_trials_completed_session);
+    $("r-minus-anticipatory-rate").textContent = protocolFraction(data.task_r_minus_cue_anticipatory_lick_trials_session, data.task_r_minus_cue_trials_completed_session);
+    $("r-discrimination").textContent = plusRate === null || minusRate === null ? "—" : (plusRate >= minusRate ? "+" : "") + Math.round((plusRate - minusRate) * 100) + " pp";
+    $("r-plus-omission-rate").textContent = protocolFraction(data.task_r_plus_omission_anticipatory_lick_trials_session, data.task_r_plus_omission_trials_completed_session);
+    var readiness = "—";
+    if (plusRate !== null) {
+      readiness = plusRate < 0.8 ? "NOT YET" : (minusRate !== null && (minusRate >= 0.5 || plusRate - minusRate < 0.2) ? "CHECK DISCRIMINATION" : "READY CANDIDATE");
+    }
+    $("reversal-readiness").textContent = readiness;
+    $("high-r-plus-rate").textContent = protocolFraction(data.task_high_r_plus_cue_anticipatory_lick_trials_session, data.task_high_r_plus_cue_trials_completed_session);
+    $("high-r-minus-rate").textContent = protocolFraction(data.task_high_r_minus_cue_anticipatory_lick_trials_session, data.task_high_r_minus_cue_trials_completed_session);
+    $("medium-r-plus-rate").textContent = protocolFraction(data.task_medium_r_plus_cue_anticipatory_lick_trials_session, data.task_medium_r_plus_cue_trials_completed_session);
+    $("medium-r-minus-rate").textContent = protocolFraction(data.task_medium_r_minus_cue_anticipatory_lick_trials_session, data.task_medium_r_minus_cue_trials_completed_session);
+    $("low-r-minus-rate").textContent = protocolFraction(data.task_low_r_minus_cue_anticipatory_lick_trials_session, data.task_low_r_minus_cue_trials_completed_session);
+    $("new-water-delivered").textContent = formatWater(data.task_water_delivered_ul_session, false);
+    $("new-water-likely-consumed").textContent = formatWater(data.task_water_likely_consumed_ul_session, true);
+    $("new-reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
   }
   function renderSpoutBehavior(data, isBaitView) {
     $("spout-phase").textContent = text(data.phase);
@@ -171,10 +200,12 @@
       $("spout-last-licks-25").textContent = formatInteger(last.lick_count_reward_to_2p5_sec);
     }
   }
-  function renderHistory(data, isSpout) {
+  function currentRewardLabel(trial) { return trial.reward_eligible === true ? "R+" : trial.reward_eligible === false ? "R-" : "—"; }
+  function renderHistory(data, isSpout, isNewProtocol) {
     var body = $("history");
     clear(body);
     setHidden("reward-conditioning-history-head", isSpout);
+    setHidden("partial-reversal-history-head", isSpout || !isNewProtocol);
     setHidden("spout-history-head", !isSpout);
     $("history-title").textContent = isSpout ? "RECENT REWARDS" : "RECENT TRIALS";
     var rows = (data.recent_trials || []).slice(0, 20);
@@ -182,6 +213,7 @@
     rows.forEach(function (trial) {
       var row = document.createElement("tr");
       if (isSpout) { addCell(row, trial.training_reward_index !== undefined ? trial.training_reward_index : trial.trial); addCell(row, spoutContact(trial.reward_contacted)); addCell(row, formatSeconds(trial.first_lick_latency_sec)); addCell(row, formatInteger(trial.lick_count_reward_to_0p5_sec)); addCell(row, formatInteger(trial.lick_count_reward_to_2p5_sec)); }
+      else if (isNewProtocol) { addCell(row, trial.trial); addCell(row, trial.stimulus_role); addCell(row, currentRewardLabel(trial)); addCell(row, rewardLabel(trial)); addCell(row, trial.anticipatory_lick === true ? "YES" : trial.anticipatory_lick === false ? "NO" : "—", trial.anticipatory_lick ? "yes" : "no"); }
       else { addCell(row, trial.trial); addCell(row, trial.stimulus_role); addCell(row, rewardLabel(trial)); addCell(row, trial.reward_omission ? "Yes" : "No"); addCell(row, trial.anticipatory_lick ? "YES" : "NO", trial.anticipatory_lick ? "yes" : "no"); }
       body.appendChild(row);
     });
@@ -198,12 +230,15 @@
   }
   function render(data) {
     var isSpout = data.protocol === "spout_training";
+    var isNewProtocol = data.protocol === "exposure_reward_partial_reversal_v1" || data.protocol_version === "exposure_reward_partial_reversal_v1" || data.new_reward_protocol_behavior_available === true;
     var isBaitPhase = data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY";
     var isBaitView = isSpout && (isBaitPhase || (!data.phase && data.manual_bait_active === true));
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
+    $("contingency-phase").textContent = text(data.contingency_phase);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
     setHidden("reward-conditioning-last-view", isSpout); setHidden("spout-last-view", !isSpout);
+    setHidden("legacy-behavior-view", isSpout || isNewProtocol); setHidden("partial-reversal-behavior-view", isSpout || !isNewProtocol);
     if (isSpout) {
       setHidden("spout-behavior-scheduled", isBaitView);
       setHidden("spout-behavior-manual", !isBaitView);
@@ -217,15 +252,21 @@
       $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role); setPreview(data.image);
       $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);
       $("block").textContent = data.block == null ? "—" : text(data.block) + (data.total_blocks == null ? "" : " / " + data.total_blocks); $("eta").textContent = formatEta(data.eta_sec);
-      renderRewardBehavior(data);
+      $("phase-contingency").textContent = text(data.contingency_phase);
+      if (isNewProtocol) renderPartialReversalBehavior(data); else renderRewardBehavior(data);
       renderLickTimeline(data.last_trial);
     }
     var last = data.last_trial, lastNode = $("last-trial"), summaryNode = $("last-summary");
     clear(lastNode);
     if (!last) { lastNode.className = "last-trial empty"; lastNode.textContent = "No completed trial received"; summaryNode.textContent = "No completed trial received"; } else {
       lastNode.className = "last-trial"; summaryNode.textContent = trialSummary(last); addPair(lastNode, "Trial", last.trial); addPair(lastNode, "Condition", last.stimulus_role); addPair(lastNode, "Reward", rewardLabel(last)); addPair(lastNode, "Reward contacted", rewardContactLabel(last)); addPair(lastNode, "Anticipatory lick", last.anticipatory_lick ? "YES" : "NO");
+      if (isNewProtocol) {
+        if (last.exposure_level !== undefined && last.exposure_level !== null) addPair(lastNode, "Exposure", last.exposure_level);
+        addPair(lastNode, "Current reward", currentRewardLabel(last));
+        if (last.reward_trajectory !== undefined && last.reward_trajectory !== null) addPair(lastNode, "Trajectory", last.reward_trajectory);
+      }
     }
-    renderHistory(data, isSpout);
+    renderHistory(data, isSpout, isNewProtocol);
   }
   var pollInFlight = false;
   function poll() {

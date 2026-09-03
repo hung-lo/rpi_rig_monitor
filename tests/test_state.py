@@ -1,6 +1,6 @@
 import unittest
 
-from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS, SPOUT_SESSION_DEFAULTS
+from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS, SESSION_STATE_DEFAULTS, SPOUT_SESSION_DEFAULTS
 
 
 class MonitorStateTests(unittest.TestCase):
@@ -101,6 +101,50 @@ class MonitorStateTests(unittest.TestCase):
         state.update(packet, received_at=1.0)
         snapshot = state.snapshot(now=1.0)
         for key, value in values.items():
+            self.assertEqual(snapshot[key], value)
+
+    def test_partial_reversal_fields_are_retained(self):
+        state = MonitorState()
+        values = {
+            "contingency_phase": "reversal",
+            "protocol_version": "exposure_reward_partial_reversal_v1",
+            "task_r_plus_cue_trials_completed_session": 220,
+            "task_r_plus_cue_anticipatory_lick_trials_session": 184,
+            "task_r_minus_cue_trials_completed_session": 280,
+            "task_r_minus_cue_anticipatory_lick_trials_session": 32,
+            "task_r_plus_omission_trials_completed_session": 22,
+            "task_r_plus_omission_anticipatory_lick_trials_session": 19,
+            "task_high_r_plus_cue_trials_completed_session": 160,
+            "task_high_r_plus_cue_anticipatory_lick_trials_session": 141,
+            "task_high_r_minus_cue_trials_completed_session": 160,
+            "task_high_r_minus_cue_anticipatory_lick_trials_session": 16,
+            "task_medium_r_plus_cue_trials_completed_session": 60,
+            "task_medium_r_plus_cue_anticipatory_lick_trials_session": 47,
+            "task_medium_r_minus_cue_trials_completed_session": 60,
+            "task_medium_r_minus_cue_anticipatory_lick_trials_session": 8,
+            "task_low_r_minus_cue_trials_completed_session": 60,
+            "task_low_r_minus_cue_anticipatory_lick_trials_session": 5,
+        }
+        packet = {"type": "state", "protocol": "reward_conditioning", "session_id": "new-protocol"}
+        packet.update(values)
+        state.update(packet, received_at=1.0)
+        snapshot = state.snapshot(now=1.0)
+        for key, value in values.items():
+            self.assertEqual(snapshot[key], value)
+        self.assertTrue(snapshot["new_reward_protocol_behavior_available"])
+
+    def test_new_session_resets_partial_reversal_fields(self):
+        state = MonitorState()
+        state.update({"type": "state", "protocol": "reward_conditioning", "session_id": "old",
+                      "contingency_phase": "reversal", "protocol_version": "exposure_reward_partial_reversal_v1",
+                      "task_r_plus_cue_trials_completed_session": 20,
+                      "task_r_plus_omission_trials_completed_session": 2,
+                      "task_high_r_plus_cue_trials_completed_session": 10}, received_at=1.0)
+        state.update({"type": "session", "session_id": "new"}, received_at=2.0)
+        snapshot = state.snapshot(now=2.0)
+        for key, value in SESSION_COUNTER_DEFAULTS.items():
+            self.assertEqual(snapshot[key], value)
+        for key, value in SESSION_STATE_DEFAULTS.items():
             self.assertEqual(snapshot[key], value)
 
     def test_new_session_resets_spout_fields(self):

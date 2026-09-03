@@ -33,7 +33,7 @@ class DemoTelemetryTests(unittest.TestCase):
                 pass
 
         fake_socket = FakeSocket()
-        argv = ["send_demo_telemetry.py", "--interval-sec", "0", "--total-trials", "1", "--session-id", "demo_test"]
+        argv = ["send_demo_telemetry.py", "--legacy", "--interval-sec", "0", "--total-trials", "1", "--session-id", "demo_test"]
         with mock.patch.object(send_demo_telemetry.socket, "socket", return_value=fake_socket), \
                 mock.patch.object(send_demo_telemetry.time, "sleep"), \
                 mock.patch.object(sys, "argv", argv):
@@ -46,6 +46,36 @@ class DemoTelemetryTests(unittest.TestCase):
         self.assertEqual(iti["task_reward_trains_verified_session"], completed["task_reward_trains_verified_session"])
         self.assertEqual(iti["task_reward_trains_contacted_session"], completed["task_reward_trains_contacted_session"])
         self.assertEqual(iti["task_rewarded_high_cue_trials_completed_session"], completed["task_rewarded_high_cue_trials_completed_session"])
+
+    def test_partial_reversal_demo_maps_current_reward_by_phase(self):
+        class FakeSocket(object):
+            def __init__(self):
+                self.packets = []
+
+            def sendto(self, payload, _address):
+                self.packets.append(json.loads(payload.decode("utf-8")))
+
+            def close(self):
+                pass
+
+        for contingency_phase in ("acquisition", "reversal"):
+            fake_socket = FakeSocket()
+            argv = ["send_demo_telemetry.py", "--interval-sec", "0", "--total-trials", "14",
+                    "--session-id", "partial_test", "--contingency-phase", contingency_phase]
+            with mock.patch.object(send_demo_telemetry.socket, "socket", return_value=fake_socket), \
+                    mock.patch.object(send_demo_telemetry.time, "sleep"), \
+                    mock.patch.object(sys, "argv", argv):
+                send_demo_telemetry.main()
+            completed = [packet for packet in fake_socket.packets if packet["type"] == "trial_complete"]
+            self.assertEqual(completed[0]["protocol_version"], send_demo_telemetry.PROTOCOL_VERSION)
+            self.assertEqual(completed[0]["contingency_phase"], contingency_phase)
+            for packet in completed[:9]:
+                trajectory = packet["reward_trajectory"]
+                expected = trajectory in (("R_to_R", "R_to_U") if contingency_phase == "acquisition" else ("R_to_R", "U_to_R"))
+                self.assertEqual(packet["reward_eligible"], expected)
+            omissions = [packet for packet in completed if packet["reward_omission"]]
+            self.assertTrue(omissions)
+            self.assertTrue(all(packet["reward_eligible"] for packet in omissions))
 
     def test_spout_demo_has_manual_bait_and_finite_scheduled_flow(self):
         class FakeSocket(object):

@@ -33,6 +33,12 @@ class WebTests(unittest.TestCase):
                            "spout-bait-contact", "spout-recent-licks", "spout-last-lick",
                            "spout-lick-status", "last-panel-title", "history-title"):
             self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+        for element_id in ("contingency-phase", "phase-contingency", "partial-reversal-behavior-view",
+                           "new-reward-contact-rate", "r-plus-anticipatory-rate", "r-minus-anticipatory-rate", "r-discrimination",
+                           "r-plus-omission-rate", "reversal-readiness", "high-r-plus-rate", "high-r-minus-rate",
+                           "medium-r-plus-rate", "medium-r-minus-rate", "low-r-minus-rate",
+                           "partial-reversal-history-head"):
+            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
 
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
         css = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.css").read_text()
@@ -42,6 +48,11 @@ class WebTests(unittest.TestCase):
         self.assertIn('empty.hidden = true', javascript)
         self.assertIn("var hasSession =", javascript)
         self.assertIn('data.protocol === "spout_training"', javascript)
+        self.assertIn('data.protocol_version === "exposure_reward_partial_reversal_v1"', javascript)
+        self.assertIn("renderPartialReversalBehavior", javascript)
+        self.assertIn("task_r_plus_cue_anticipatory_lick_trials_session", javascript)
+        self.assertIn("task_r_minus_cue_anticipatory_lick_trials_session", javascript)
+        self.assertIn("reversal-readiness", javascript)
         self.assertIn('var isBaitPhase = data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY";', javascript)
         self.assertIn('var isBaitView = isSpout && (isBaitPhase || (!data.phase && data.manual_bait_active === true));', javascript)
         self.assertNotIn('data.manual_bait_active === true);', javascript)

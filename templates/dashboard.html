@@ -13,7 +13,7 @@
         <p class="eyebrow">READ-ONLY OBSERVATION</p>
         <h1>Rig Monitor</h1>
       </div>
-      <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span></p>
+      <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span> · Contingency: <span id="contingency-phase">—</span></p>
       <div id="connection" class="status stale"><span class="dot"></span><span>STALE</span></div>
     </header>
 
@@ -28,10 +28,11 @@
         <p class="eyebrow" id="session-title">SESSION</p>
         <div id="reward-conditioning-session-view">
           <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
+          <div class="metric-row"><span>Contingency</span><strong id="phase-contingency">—</strong></div>
           <div class="metric-row"><span>Trial</span><strong id="trial">—</strong></div>
           <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
           <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
-        <div class="behavior-section">
+        <div id="legacy-behavior-view" class="behavior-section">
           <p class="eyebrow">WATER / BEHAVIOR</p>
           <div class="metric-row"><span>Reward contact</span><strong id="reward-contact-rate">—</strong></div>
           <div class="metric-row"><span>Rewarded-cue anticip. lick</span><strong id="rewarded-cue-anticipatory-rate">—</strong></div>
@@ -41,6 +42,25 @@
           <div class="metric-row"><span>Likely consumed</span><strong id="water-likely-consumed">—</strong></div>
           <div class="metric-row"><span>Reward volume</span><strong id="reward-volume">—</strong></div>
           <p class="behavior-help">Reward contact is the fraction of verified delivered rewards with a lick before suction. Cue anticipatory rates use completed trials and the 0–1 s pre-reward window; omissions remain in the rewarded-cue denominator. Likely consumed is a contact-based estimate, not direct fluid-intake measurement.</p>
+        </div>
+        <div id="partial-reversal-behavior-view" class="behavior-section" hidden>
+          <p class="eyebrow">BEHAVIOR</p>
+          <div class="metric-row"><span>Reward contact</span><strong id="new-reward-contact-rate">—</strong></div>
+          <div class="metric-row"><span>Current R+ anticipatory lick</span><strong id="r-plus-anticipatory-rate">—</strong></div>
+          <div class="metric-row"><span>Current R− anticipatory lick</span><strong id="r-minus-anticipatory-rate">—</strong></div>
+          <div class="metric-row"><span>R+ − R− discrimination</span><strong id="r-discrimination">—</strong></div>
+          <div class="metric-row"><span>R+ omission anticipatory lick</span><strong id="r-plus-omission-rate">—</strong></div>
+          <div class="metric-row"><span>Reversal readiness</span><strong id="reversal-readiness">—</strong></div>
+          <p class="eyebrow secondary-heading">EXPOSURE BREAKDOWN</p>
+          <div class="metric-row"><span>High R+</span><strong id="high-r-plus-rate">—</strong></div>
+          <div class="metric-row"><span>High R−</span><strong id="high-r-minus-rate">—</strong></div>
+          <div class="metric-row"><span>Medium R+</span><strong id="medium-r-plus-rate">—</strong></div>
+          <div class="metric-row"><span>Medium R−</span><strong id="medium-r-minus-rate">—</strong></div>
+          <div class="metric-row"><span>Low R−</span><strong id="low-r-minus-rate">—</strong></div>
+          <div class="metric-row"><span>Water delivered</span><strong id="new-water-delivered">—</strong></div>
+          <div class="metric-row"><span>Likely consumed</span><strong id="new-water-likely-consumed">—</strong></div>
+          <div class="metric-row"><span>Reward volume</span><strong id="new-reward-volume">—</strong></div>
+          <p class="behavior-help">R+ and R− rates use Box151 cumulative counters. Readiness is operator feedback only; it never changes the task.</p>
         </div>
         </div>
         <div id="spout-session-view" class="protocol-view" hidden>
@@ -106,6 +126,7 @@
       <div class="table-wrap">
         <table>
           <thead id="reward-conditioning-history-head"><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
+          <thead id="partial-reversal-history-head" hidden><tr><th>Trial</th><th>Role</th><th>Current contingency</th><th>Reward</th><th>Anticipatory lick</th></tr></thead>
           <thead id="spout-history-head" hidden><tr><th>Reward</th><th>Contacted</th><th>First lick</th><th>Licks 0–0.5 s</th><th>Licks 0–2.5 s</th></tr></thead>
           <tbody id="history"><tr><td colspan="5" class="empty">No trial history</td></tr></tbody>
         </table>

@@ -76,7 +76,7 @@ The demo is a finite session and stops after `--total-trials` completed trials. 
 
 ## Water and behavioral performance
 
-The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Reward contact is contacted verified rewards divided by verified delivered rewards. Rewarded-cue anticipatory lick is the anticipatory count divided by completed rewarded-high cue trials. In a standard 50-trial block, the rewarded-high denominator contains 20 trials: 18 normally rewarded and 2 reward-omission trials. Unrewarded-high cues are 20 trials per block, and low-probability unrewarded cues are 10 trials per block. All anticipatory rates use Box151's 0–1 s definition.
+The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Legacy telemetry keeps its rewarded-high, unrewarded-high, and low-probability readouts. The `exposure_reward_partial_reversal_v1` protocol instead shows current R+/R− anticipatory rates, discrimination, omission learning, reversal readiness, and high/medium/low exposure breakdowns. `acquisition` and `reversal` are displayed separately from the operational task phase. All anticipatory rates use Box151's 0–1 s definition.
 
 “Likely consumed” is an approximate contact-based estimate, not a direct fluid-intake measurement. Water volume and totals are displayed only when supplied by Box151. Dashboard timing remains observational and is not a scientific timing measurement.
 
@@ -93,6 +93,17 @@ python tools/send_spout_demo_telemetry.py
 ```
 
 It exercises manual bait, five scheduled reward episodes, and a final `COMPLETE` state without requiring hardware. The monitor displays Box151-supplied counters and does not reconstruct cumulative values from UDP packet history.
+
+## Partial-reversal demo telemetry
+
+The default reward-conditioning demo exercises the 14-stimulus partial-reversal contract:
+
+```bash
+python tools/send_demo_telemetry.py --contingency-phase acquisition
+python tools/send_demo_telemetry.py --contingency-phase reversal
+```
+
+It sends `protocol_version: exposure_reward_partial_reversal_v1`, current reward eligibility, omission fields, exposure breakdown counters, and authoritative cumulative session totals. The demo uses `3.0 µL/train` as synthetic data only. Use `--legacy` to exercise the previous reward-conditioning telemetry shape.
 
 ## Telemetry
 

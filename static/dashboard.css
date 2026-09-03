@@ -23,6 +23,7 @@ h1 { margin: 0; font-size: clamp(1.9rem, 3vw, 2.6rem); letter-spacing: -.04em; }
 .licking { color: var(--accent) !important; } .quiet { color: var(--muted) !important; }
 .behavior-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .behavior-section .eyebrow { margin-bottom: 2px; }
+.behavior-section .secondary-heading { margin-top: 14px; }
 .behavior-section .metric-row { padding: 6px 0; font-size: .88rem; }
 .behavior-section .secondary-metric { color: var(--muted); font-size: .82rem; }
 .behavior-help { margin: 10px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.35; }

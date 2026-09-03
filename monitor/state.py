@@ -7,18 +7,51 @@ from threading import RLock
 from typing import Any, Deque, Dict, Optional
 
 
-SESSION_COUNTER_DEFAULTS = {
+COMMON_SESSION_COUNTER_DEFAULTS = {
     "reward_volume_ul_per_train": None,
     "task_reward_trains_verified_session": 0,
     "task_reward_trains_contacted_session": 0,
     "task_water_delivered_ul_session": None,
     "task_water_likely_consumed_ul_session": None,
+}
+
+NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS = {
+    "task_r_plus_cue_trials_completed_session": 0,
+    "task_r_plus_cue_anticipatory_lick_trials_session": 0,
+    "task_r_minus_cue_trials_completed_session": 0,
+    "task_r_minus_cue_anticipatory_lick_trials_session": 0,
+    "task_r_plus_omission_trials_completed_session": 0,
+    "task_r_plus_omission_anticipatory_lick_trials_session": 0,
+    "task_high_r_plus_cue_trials_completed_session": 0,
+    "task_high_r_plus_cue_anticipatory_lick_trials_session": 0,
+    "task_high_r_minus_cue_trials_completed_session": 0,
+    "task_high_r_minus_cue_anticipatory_lick_trials_session": 0,
+    "task_medium_r_plus_cue_trials_completed_session": 0,
+    "task_medium_r_plus_cue_anticipatory_lick_trials_session": 0,
+    "task_medium_r_minus_cue_trials_completed_session": 0,
+    "task_medium_r_minus_cue_anticipatory_lick_trials_session": 0,
+    "task_low_r_minus_cue_trials_completed_session": 0,
+    "task_low_r_minus_cue_anticipatory_lick_trials_session": 0,
+}
+
+LEGACY_REWARD_PROTOCOL_COUNTER_DEFAULTS = {
     "task_rewarded_high_cue_trials_completed_session": 0,
     "task_rewarded_high_cue_anticipatory_lick_trials_session": 0,
     "task_unrewarded_high_cue_trials_completed_session": 0,
     "task_unrewarded_high_cue_anticipatory_lick_trials_session": 0,
     "task_low_probability_cue_trials_completed_session": 0,
     "task_low_probability_cue_anticipatory_lick_trials_session": 0,
+}
+
+SESSION_COUNTER_DEFAULTS = {}
+SESSION_COUNTER_DEFAULTS.update(COMMON_SESSION_COUNTER_DEFAULTS)
+SESSION_COUNTER_DEFAULTS.update(NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS)
+SESSION_COUNTER_DEFAULTS.update(LEGACY_REWARD_PROTOCOL_COUNTER_DEFAULTS)
+
+SESSION_STATE_DEFAULTS = {
+    "contingency_phase": None,
+    "protocol_version": None,
+    "new_reward_protocol_behavior_available": False,
 }
 
 SPOUT_SESSION_DEFAULTS = {
@@ -83,6 +116,7 @@ class MonitorState(object):
             "last_trial": None,
             "recent_trials": [],
         }
+        self._data.update(copy.deepcopy(SESSION_STATE_DEFAULTS))
         self._data.update(copy.deepcopy(SESSION_COUNTER_DEFAULTS))
         self._data.update(copy.deepcopy(SPOUT_SESSION_DEFAULTS))
         self._recent: Deque[Dict[str, Any]] = deque(maxlen=history_limit)
@@ -103,13 +137,17 @@ class MonitorState(object):
                 for key in ("phase", "trial", "total_trials", "block", "total_blocks",
                             "image", "stimulus_role", "eta_sec", "last_trial", "recent_trials"):
                     self._data[key] = [] if key == "recent_trials" else None
+                self._data.update(copy.deepcopy(SESSION_STATE_DEFAULTS))
                 self._data.update(copy.deepcopy(SESSION_COUNTER_DEFAULTS))
                 self._data.update(copy.deepcopy(SPOUT_SESSION_DEFAULTS))
 
-            for key in ("protocol", "session_id", "phase", "trial", "total_trials",
-                        "block", "total_blocks", "image", "stimulus_role", "eta_sec"):
+            for key in ("protocol", "protocol_version", "session_id", "phase", "contingency_phase",
+                        "trial", "total_trials", "block", "total_blocks", "image",
+                        "stimulus_role", "eta_sec"):
                 if key in packet:
                     self._data[key] = copy.deepcopy(packet[key])
+            if any(key in packet for key in NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS):
+                self._data["new_reward_protocol_behavior_available"] = True
             for key in SESSION_COUNTER_DEFAULTS:
                 if key in packet:
                     self._data[key] = copy.deepcopy(packet[key])
