@@ -1,6 +1,7 @@
 import unittest
 
-from monitor.state import MonitorState, SESSION_COUNTER_DEFAULTS, SESSION_STATE_DEFAULTS, SPOUT_SESSION_DEFAULTS
+from monitor.state import (MonitorState, NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS,
+                           SESSION_COUNTER_DEFAULTS, SESSION_STATE_DEFAULTS, SPOUT_SESSION_DEFAULTS)
 
 
 class MonitorStateTests(unittest.TestCase):
@@ -132,6 +133,17 @@ class MonitorStateTests(unittest.TestCase):
         for key, value in values.items():
             self.assertEqual(snapshot[key], value)
         self.assertTrue(snapshot["new_reward_protocol_behavior_available"])
+
+    def test_missing_partial_reversal_counters_are_not_reconstructed(self):
+        state = MonitorState()
+        state.update({"type": "session", "protocol": "reward_conditioning", "session_id": "no-reconstruction"}, received_at=1.0)
+        for trial in range(1, 4):
+            state.update({"type": "trial_complete", "session_id": "no-reconstruction", "trial": trial,
+                          "reward_eligible": trial != 2, "anticipatory_lick": True}, received_at=float(trial))
+        snapshot = state.snapshot(now=3.0)
+        for key in NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS:
+            self.assertEqual(snapshot[key], 0)
+        self.assertFalse(snapshot["new_reward_protocol_behavior_available"])
 
     def test_new_session_resets_partial_reversal_fields(self):
         state = MonitorState()

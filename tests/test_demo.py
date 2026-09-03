@@ -77,6 +77,36 @@ class DemoTelemetryTests(unittest.TestCase):
             self.assertTrue(omissions)
             self.assertTrue(all(packet["reward_eligible"] for packet in omissions))
 
+    def test_partial_reversal_demo_has_separated_synthetic_behavior_rates(self):
+        class FakeSocket(object):
+            def __init__(self):
+                self.packets = []
+
+            def sendto(self, payload, _address):
+                self.packets.append(json.loads(payload.decode("utf-8")))
+
+            def close(self):
+                pass
+
+        for contingency_phase in ("acquisition", "reversal"):
+            fake_socket = FakeSocket()
+            argv = ["send_demo_telemetry.py", "--interval-sec", "0", "--total-trials", "100",
+                    "--session-id", "rate_test", "--contingency-phase", contingency_phase]
+            with mock.patch.object(send_demo_telemetry.socket, "socket", return_value=fake_socket), \
+                    mock.patch.object(send_demo_telemetry.time, "sleep"), \
+                    mock.patch.object(sys, "argv", argv):
+                send_demo_telemetry.main()
+            final = [packet for packet in fake_socket.packets if packet["type"] == "trial_complete"][-1]
+            plus_rate = final["task_r_plus_cue_anticipatory_lick_trials_session"] / float(final["task_r_plus_cue_trials_completed_session"])
+            minus_rate = final["task_r_minus_cue_anticipatory_lick_trials_session"] / float(final["task_r_minus_cue_trials_completed_session"])
+            self.assertGreaterEqual(plus_rate, 0.80)
+            self.assertLessEqual(minus_rate, 0.30)
+            self.assertGreaterEqual(plus_rate - minus_rate, 0.20)
+            self.assertEqual(final["task_r_plus_cue_trials_completed_session"],
+                             final["task_high_r_plus_cue_trials_completed_session"] + final["task_medium_r_plus_cue_trials_completed_session"])
+            self.assertEqual(final["task_r_minus_cue_trials_completed_session"],
+                             final["task_high_r_minus_cue_trials_completed_session"] + final["task_medium_r_minus_cue_trials_completed_session"] + final["task_low_r_minus_cue_trials_completed_session"])
+
     def test_spout_demo_has_manual_bait_and_finite_scheduled_flow(self):
         class FakeSocket(object):
             def __init__(self):

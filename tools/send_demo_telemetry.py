@@ -50,6 +50,7 @@ def new_protocol_demo(args):
     images = ["natimg_center_0693.png", "natimg_center_1393.png", "natimg_center_2093.png", "natimg_center_2793.png"]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     reward_volume = 3.0
+    r_plus_ordinal = r_minus_ordinal = 0
     counters = {
         "task_reward_trains_verified_session": 0,
         "task_reward_trains_contacted_session": 0,
@@ -86,7 +87,12 @@ def new_protocol_demo(args):
             block = ((trial - 1) // args.trials_per_block) + 1
             role = ROLES[(trial - 1) % len(ROLES)]
             exposure, trajectory, reward_eligible = role_details(role, args.contingency_phase)
-            anticipatory_lick = trial % (10 if reward_eligible else 5) != 0
+            if reward_eligible:
+                r_plus_ordinal += 1
+                anticipatory_lick = r_plus_ordinal % 10 != 0
+            else:
+                r_minus_ordinal += 1
+                anticipatory_lick = r_minus_ordinal % 5 == 0
             lick_times = [0.21] if anticipatory_lick else []
             reward_omission = reward_eligible and trial % 7 == 0
             reward_delivered = reward_eligible and not reward_omission
