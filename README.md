@@ -6,9 +6,11 @@ cameras, audio, reward timing, stimulus timing, and scientific event logging.
 The monitor's UDP telemetry is observational and may be lost; closing a browser
 or restarting Flask does not stop a supervised experiment.
 
-The built-in registry exposes only a hardware-free fake task. An administrator
-may add trusted definitions for separately installed tasks; real VStim and
-Go/NoGo protocols are not registered. See
+The built-in registry exposes a hardware-free fake task. An administrator may
+register separately installed tasks through trusted server-side definitions.
+Natural Images has been validated with VStim's hardware-free operator simulation;
+it is enabled only by a deployment registry entry and never launches physical
+Natural Images through this monitor. Go/NoGo is not registered. See
 [external protocol setup](docs/external_protocols.md) and
 [the engine interface proposal](docs/rpi_vstim_interface.md).
 
@@ -84,6 +86,13 @@ supervisor startup. The public registry API does not expose machine paths or
 argv. See [`docs/external_protocols.md`](docs/external_protocols.md) for the
 file format.
 
+The Natural Images registration uses `protocol_id: natural_images`, engine ID
+`natural-images`, adapter `unix_json_v1`, and preset `operator_simulation`.
+Its fixed argv must include the VStim simulation profile, `--simulate`,
+`--operator-control`, and a temporary `--output-root`. Executable, checkout, and
+profile paths belong in the trusted registry file, not monitor source or browser
+requests. Missing paths make the entry unavailable.
+
 ### systemd deployment
 
 An example unit is in
@@ -139,6 +148,31 @@ Linux process identity and reconnects to its control socket. UDP telemetry may
 be disabled or stale without changing task state. A second launch is rejected
 until the known task is terminal. An active telemetry session not registered
 with the supervisor also blocks new launches.
+
+### Natural Images software-only integration
+
+The optional cross-repository test runs the real VStim console entry point under
+Python 3.13 against `config/rigs/natural_images.operator_simulation.toml` from a
+configured VStim source tree. Set `RPI_VSTIM_CHECKOUT`,
+`RPI_VSTIM_EXECUTABLE`, and `RPI_VSTIM_PYTHON`; set
+`RPI_VSTIM_PYTHONPATH` only when that Python environment needs an extra package
+path such as Pillow. Then run:
+
+```bash
+python3 -m pytest -m vstim_integration -q
+```
+
+The test uses a temporary trusted registry and output directory. It restarts
+Flask and the supervisor at READY and RUNNING, exercises START, STOP, telemetry
+loss, registry reload, preparation failure, and ABORT from READY. When a
+terminal response is missed, VStim's final artifact can say COMPLETE or ABORTED
+while the supervisor reports ERROR; a prior run also found an acknowledged STOP
+missing from the final operator metadata. The optional test reports these
+engine/monitor lifecycle gaps as expected failures. Normal monitor tests skip
+this integration when the required environment variables are unset. This
+validates the real engine software-only through
+`FakeDisplayBackend`; Pi GUI, physical KMS, cameras, GPIO, audio, and reward
+delivery remain untested.
 
 ## Existing telemetry demos
 

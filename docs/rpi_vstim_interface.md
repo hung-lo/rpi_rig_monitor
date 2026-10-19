@@ -74,19 +74,80 @@ sockets under `/var/lib/rpi-rig-monitor`, with the supervisor client socket
 under `/run/rpi-rig-monitor`; Flask must run as the same local operator account
 to access it.
 
-Proposed request envelope:
+Canonical `unix_json_v1` request envelope:
 
 ```json
-{"request_id":"unique-id","command":"deliver_bait","channel":"left"}
+{"schema_version":1,"request_id":"unique-id","command":"deliver_bait","channel":"left"}
 ```
 
-Other commands are `status`, `start`, `stop`, and `abort`. A `prepare` request is
-handled by the supervisor launch registry; the engine process starts, performs
-preflight, then reports `READY`. `stop` asks the engine to finish cleanly;
-`abort` asks it to end immediately and report `ABORTED`. Every request receives
-an explicit success or structured error acknowledgement. The engine should
-deduplicate `request_id` values so a lost HTTP response cannot repeat a manual
-reward.
+Every request, including `status`, carries `schema_version: 1` and a unique
+`request_id`. Every status response, success acknowledgement, and error
+acknowledgement must return `schema_version: 1` and the identical request ID.
+The monitor rejects missing or mismatched response fields. VStim's
+`ExperimentControl` accepts omitted envelope fields for older clients, but it
+echoes a supplied status request ID and returns versioned, correlated responses;
+the monitor uses only the strict form.
+
+Other commands are `status`, `start`, `stop`, `abort`, and semantic actions such
+as `deliver_bait`. A `prepare` request is handled by the supervisor launch
+registry; the engine starts, performs preflight, then reports `READY`. `stop`
+asks the engine to finish cleanly; `abort` asks it to end immediately and report
+`ABORTED`. Mutating request IDs are idempotent: VStim caches the last 128
+acknowledgements, returns the original acknowledgement for the same ID/body,
+and rejects reuse of an ID with a different command. The supervisor also
+persists up to 128 acknowledgements so an HTTP retry after a supervisor restart
+returns the previous result without reissuing the engine action.
+
+| Operation | VStim implementation at tested commit | Monitor v1 behavior |
+|---|---|---|
+| Schema | `CONTROL_SCHEMA_VERSION = 1`; accepts omitted schema as legacy v1 | Always sends integer `1`; rejects absent, non-integer, or unsupported response versions |
+| Request ID | Mutations require an ID; status accepts an optional ID and echoes it | Sends a fresh ID for status and uses the operator ID for mutations; requires an exact echo |
+| Status | Returns `ok`, `state`, and nested `status` | Validates envelope and required lifecycle status fields |
+| Session identity | Status reports the launched `session_id` | Must match the persisted monitor session ID before adoption |
+| Engine protocol identity | Status reports `natural-images` | Must match saved `engine_protocol_id`; monitor ID remains `natural_images` |
+| Lifecycle | Reports PREPARING/READY/RUNNING/FINISHING/COMPLETE/ERROR/ABORTED | Uses the engine state while control is reachable |
+| Capabilities | Runtime capabilities are filtered by lifecycle | GUI enables only advertised capabilities |
+| Timing | `elapsed_s` and `eta_s` are status fields; ETA may be null | Reads from control status; telemetry is not authoritative |
+| Start / stop / abort | Lifecycle-checked commands with acknowledgements | Sends only when current runtime capability allows the action |
+| Errors | `ok: false`, current state, structured `error.code` and `error.message` | Rejects the command and shows a concise error; retains full process logs |
+| Reconnect | A new status request reports the current engine state | Supervisor revalidates PID identity, then queries the existing control socket |
+| Duplicate mutation | Last 128 IDs are cached; same ID/body returns original ack; changed body is rejected | Persists the last 128 acknowledgements and does not repeat a retried action |
+
+The VStim adapter document still shows the older schema-optional examples. The
+tested controller supports the strict request form above, so runtime integration
+needs no engine change; aligning that engine-side documentation remains useful.
+
+### Terminal-state recovery gap
+
+When a terminal control response is missed, VStim writes the correct final
+status but closes the control socket before the supervisor can query it. This
+was observed for RUNNING -> ABORT (`ABORTED`, process exit 130), and once for
+STOP (`COMPLETE`, process exit 0). In those races the monitor's last correlated
+status is active/`FINISHING`, so it can report `ERROR`; it cannot safely infer
+the engine's final state from the current v1 control contract. Another run
+captured STOP as `COMPLETE`. The optional integration test reports the gap as an
+expected failure when encountered. READY -> ABORT is visible in the
+acknowledgement and works.
+
+Before RUNNING abort can be fully integrated, the engine contract needs a
+durable terminal result the supervisor can verify after cleanup. The smallest
+robust option is to keep a final status query available until the supervisor
+retrieves or acknowledges terminal status, with a bounded fallback when the
+monitor is absent. Alternatively, define process exit-code-to-lifecycle
+semantics as part of the adapter contract and persist that mapping in launch
+metadata. The monitor does not add an undocumented exit-code guess.
+
+## Status authority
+
+- Engine-authoritative: lifecycle, capabilities, elapsed time, ETA, and
+  protocol-specific scientific state from the Unix control status.
+- Supervisor-derived: process existence and identity, saved launch argv/metadata,
+  control connectivity, and persistent stdout/stderr paths.
+- Telemetry-observational: hardware snapshots, integrity snapshots, recent event
+  packets, and `FRESH` / `STALE` / `NONE` freshness.
+
+Telemetry never changes supervisor lifecycle. When control is reachable, the
+GUI uses the engine lifecycle even if telemetry reports an older lifecycle.
 
 Manual reward is a semantic `deliver_bait(channel=...)` command. The engine
 chooses calibrated output behavior, validates availability, actuates hardware,
@@ -143,17 +204,14 @@ strings are not part of the interface.
 
 ## Registered task adapter
 
-The monitor's trusted registry currently implements `unix_json_v1`. It starts a
-registered executable with structured argv and supplies `--control-socket`,
-`--session-id`, and `--telemetry-port`. The task owns its Unix socket and
-authoritative lifecycle. Its status response must contain `protocol`,
-`session_id`, `state`, and runtime `capabilities`; elapsed/ETA are optional.
-Mutating requests carry request IDs. The monitor checks `ok: true` on acknowledgements and
-validates identity/state fields in status, but it currently does not send or
-validate a control `schema_version` or require the response to echo a request
-ID. The task should deduplicate request IDs. This permissive v1 behavior must be
-made explicit or tightened before registering a real engine. The monitor does
-not use UDP for commands. Control status uses `state`; UDP telemetry uses
+The monitor's trusted registry implements `unix_json_v1`. It starts a registered
+executable with structured argv and supplies `--control-socket`, `--session-id`,
+and `--telemetry-port`. The task owns its Unix socket and authoritative
+lifecycle. Its status response contains `protocol`, `session_id`, `state`, and
+runtime `capabilities`; elapsed/ETA may be null when not known. All responses
+are schema- and request-correlated. The monitor checks that envelope before
+using `ok`, validates engine session/protocol/state identity, and persists the
+resolved launch identity. Control status uses `state`; UDP telemetry uses
 `lifecycle` and remains observational.
 
 Stable registry IDs belong to the monitor. If an engine uses a different
@@ -163,18 +221,28 @@ verifies the status response against the saved engine ID. This keeps IDs such as
 `natural-images`. The exact registry entry and resolved argv are persisted so
 registry edits cannot reinterpret an already-running session.
 
-## Natural Images status
+## Natural Images software-only preset
 
-Natural Images is not registered as runnable. The current
-`natural-images run --operator-control` path requires leased KMS during
-preparation and opens KMS after START, and it does not offer a hardware-free
-operator-control simulation mode. Before registration, VStim needs a safe
-simulation path that prepares to READY without physical display probing and
-runs START/STOP/ABORT through simulated display/timing services without GPIO,
-KMS, camera, or audio access. Then monitor-side integration can validate the
-existing control contract without hardware.
+The `natural_images` registry entry uses engine protocol `natural-images`,
+adapter `unix_json_v1`, and preset `operator_simulation`. A trusted deployment
+registry supplies its executable, working directory, and the
+`config/rigs/natural_images.operator_simulation.toml` path. Its fixed argv uses
+`natural-images run --operator-control --simulate --image-count 5`, an explicit
+temporary output root, and the validated subject ID as `--mouse-id`. The
+integration asserts `--simulate` is present. PREPARE/READY, START/RUNNING,
+reconnect, STOP/COMPLETE, and READY -> ABORT have been exercised software-only
+against VStim commit `ff3b9f7406962023bfe248bdf8a8b09a623362dd`. RUNNING ->
+ABORT exposes the terminal-state recovery gap above. No physical Natural Images
+preset is registered.
 
-The monitor's built-in fake task remains the only runnable protocol. External
-task repositories can use the same adapter without being imported by the
-monitor or merged into `rpi_vstim_suite`; see
+In that engine version, READY runs configuration, asset, and plan preflight but
+does not create a session, frame clock, KMS acquisition, cameras, GPIO, or audio.
+START creates the simulated session and uses `FakeDisplayBackend`. STOP and
+ABORT finalize through the engine lifecycle. Simulation timestamps are planned
+values and are not physical presentation timing. The monitor remains a process
+supervisor and operator view, not the scientific clock.
+
+The monitor's built-in fake task remains available independently. Separately
+installed task repositories can use the same adapter without being imported by
+the monitor or merged into `rpi_vstim_suite`; see
 [`external_protocols.md`](external_protocols.md).

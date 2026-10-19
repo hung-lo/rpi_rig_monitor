@@ -33,6 +33,7 @@ Schema version 1 accepts these fields:
       "presets": [
         {"preset_id": "standard", "display_name": "Standard", "description": "Approved session",
          "arguments": ["--profile", "standard", "--config", "/opt/external-demo/config/standard.toml"],
+         "config_path": "/opt/external-demo/config/standard.toml",
          "required_files": ["/opt/external-demo/config/standard.toml"]}
       ]
     }
@@ -41,7 +42,7 @@ Schema version 1 accepts these fields:
 ```
 
 Executable and preset argv are arrays of fixed strings. Relative paths in
-`working_directory` and `required_files` resolve relative to the registry file;
+`working_directory`, `config_path`, and `required_files` resolve relative to the registry file;
 relative executable paths do too. A command name such as `rpi-vstim` resolves
 through the supervisor's `PATH`. Static preset arguments are trusted and never
 come from a browser request. The current runtime field schema supports the
@@ -51,7 +52,7 @@ The supervisor provides `--control-socket`, `--session-id`, and
 `--telemetry-port` after the registered arguments for `unix_json_v1` tasks. The
 supervisor creates the session ID and passes the same ID to the task. It records
 the stable monitor `protocol_id`, optional engine-native `engine_protocol_id`,
-`preset_id`, subject ID, adapter, cwd, and exact resolved argv. On recovery it
+`preset_id`, subject ID, adapter, config path, cwd, and exact resolved argv. On recovery it
 uses that saved record and queries the existing task socket; it does not rebuild
 or launch from the current registry.
 
@@ -73,7 +74,9 @@ removed or changed.
 `unix_json_v1` uses one UTF-8 JSON request per Unix-socket connection. The task
 must implement `status`, `start`, `stop`, and `abort`; status returns the task's
 session ID, engine protocol ID, lifecycle, elapsed/ETA values when known, and
-runtime capabilities. Mutating requests include a request ID and return an
+runtime capabilities. Every request, including status, contains
+`schema_version: 1` and a request ID. Every response echoes schema version 1
+and that same request ID, including failures. Mutating requests return an
 acknowledgement. The task validates every command against its lifecycle and
 deduplicates retries. Runtime capabilities come from the task, not the registry
 or preset. See [the control contract](rpi_vstim_interface.md).
@@ -83,25 +86,34 @@ scientific logs. It must continue independently of the browser and Flask. The
 monitor owns process launch and observation; it never imports the task, controls
 GPIO, or becomes a timing source.
 
-## Future Natural Images registration (not enabled)
+## Natural Images operator simulation
 
-The intended stable monitor ID is `natural_images`; the VStim CLI currently
-reports the engine-native protocol name `natural-images`. The registry supports
-that distinction explicitly:
+Natural Images PREPARE/READY, START/RUNNING, reconnect, STOP/COMPLETE, and READY
+-> ABORT have been validated software-only through the actual VStim
+operator-control engine using the generic registry. The engine/monitor
+terminal-state recovery race, seen after STOP and RUNNING -> ABORT, is documented in
+[`rpi_vstim_interface.md`](rpi_vstim_interface.md). Its stable monitor ID is
+`natural_images`; the engine reports `natural-images`. A deployment entry uses
+adapter `unix_json_v1`, preset ID `operator_simulation`, and fixed argv built
+from these components:
 
-```yaml
-protocol_id: natural_images
-engine_protocol_id: natural-images
-display_name: Natural Images
-adapter_type: unix_json_v1
-executable: [rpi-vstim]
-preset: short_validation
+```text
+<configured-rpi-vstim> natural-images run
+  --config <configured>/config/rigs/natural_images.operator_simulation.toml
+  --image-count 5 --simulate --operator-control
+  --output-root <temporary-output-root>
+  --mouse-id <validated-subject-id>
+  --control-socket <supervisor-path> --session-id <monitor-session-id>
+  --telemetry-port <monitor-udp-port>
 ```
 
-This is illustrative only and is not a runnable monitor entry. Real Natural
-Images integration remains pending a safe hardware-free VStim operator-control
-simulation path. The monitor must not register it as available until that path
-and its control lifecycle are validated.
+Paths and executable are configured in the trusted registry file, not in
+application source or browser input. The simulation profile uses
+`FakeDisplayBackend` and a simulated hardware backend. The registry entry must
+include `--simulate`; no physical Natural Images preset is provided. The local
+integration test targets VStim
+`ff3b9f7406962023bfe248bdf8a8b09a623362dd` with Python 3.13. This does not
+validate Pi deployment or physical KMS, cameras, GPIO, audio, or reward output.
 
 ## Separate Go/NoGo repository
 
