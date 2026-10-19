@@ -76,6 +76,9 @@ class RegistryTests(unittest.TestCase):
             self.assertFalse(item["presets"][0]["available"])
             with self.assertRaisesRegex(RegistryError, "not installed"):
                 registry.resolve("external_demo", "standard", "session-1", "/tmp/control.sock", 0, {})
+            config_registry = ProtocolRegistry((self._protocol(presets=(Preset(
+                "standard", "Standard", "", (), config_path=Path(directory) / "missing.toml"),)),))
+            self.assertFalse(config_registry.public_metadata()[0]["available"])
 
     def test_registry_file_builds_deterministic_structured_launch_spec(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +97,8 @@ class RegistryTests(unittest.TestCase):
                     "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
                                         "required": True, "type": "subject_id", "cli_flag": "--subject-id"}],
                     "presets": [{"preset_id": "steady", "display_name": "Steady", "description": "",
-                                 "arguments": ["--config", str(config)], "required_files": [str(config)]}],
+                                 "arguments": ["--config", str(config)], "required_files": [str(config)],
+                                 "config_path": str(config)}],
                 }],
             }))
             registry = ProtocolRegistry.from_json_file(registry_file)
@@ -107,7 +111,9 @@ class RegistryTests(unittest.TestCase):
                                          "--subject-id", "Fucci-Tri_7", "--control-socket", "/tmp/control.sock",
                                          "--session-id", "session-1", "--telemetry-port", "5055"))
             self.assertEqual(spec.cwd, directory)
+            self.assertEqual(spec.config_path, str(config))
             self.assertEqual(dict(spec.env), {})
+            self.assertNotIn(str(config), json.dumps(registry.public_metadata()))
             self.assertEqual(registry.public_metadata()[0]["protocol_id"], "external_demo")
 
     def test_unknown_protocol_preset_and_runtime_fields_are_rejected(self):

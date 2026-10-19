@@ -39,6 +39,7 @@ class Preset:
     description: str
     arguments: Tuple[str, ...]
     required_files: Tuple[Path, ...] = ()
+    config_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class LaunchSpec:
     cwd: Optional[str]
     env: Mapping[str, str]
     runtime_fields: Mapping[str, str]
+    config_path: Optional[str] = None
 
 
 def validate_subject_id(value):
@@ -108,7 +110,8 @@ class ProtocolRegistry:
             cwd_missing = protocol.working_directory is not None and not protocol.working_directory.is_dir()
             presets = []
             for preset in protocol.presets:
-                missing_file = any(not item.is_file() for item in preset.required_files)
+                missing_file = (any(not item.is_file() for item in preset.required_files)
+                                or (preset.config_path is not None and not preset.config_path.is_file()))
                 reason = (executable_error or ("Configured working directory is missing" if cwd_missing else None)
                           or ("Required preset configuration is missing" if missing_file else None))
                 presets.append({"preset_id": preset.preset_id, "display_name": preset.display_name,
@@ -174,6 +177,7 @@ class ProtocolRegistry:
             argv=tuple(argv),
             cwd=str(protocol.working_directory) if protocol.working_directory else None,
             env={}, runtime_fields=values,
+            config_path=str(preset.config_path) if preset.config_path else None,
         )
 
 
@@ -228,6 +232,8 @@ def _validate_protocol(protocol):
             raise RegistryError("preset description must be text")
         if any(not isinstance(path, Path) for path in preset.required_files):
             raise RegistryError("preset required_files must be paths")
+        if preset.config_path is not None and not isinstance(preset.config_path, Path):
+            raise RegistryError("preset config_path must be a path")
     field_names = set()
     field_flags = set()
     for field in protocol.runtime_fields:
@@ -286,14 +292,15 @@ def _protocol_from_json(raw, base_dir):
     for item in raw["presets"]:
         preset_keys = {"preset_id", "display_name"}
         if not isinstance(item, dict) or not preset_keys.issubset(item) or set(item) - (
-                preset_keys | {"description", "arguments", "required_files"}):
+                preset_keys | {"description", "arguments", "required_files", "config_path"}):
             raise RegistryError("invalid preset entry in registry file")
         arguments = item.get("arguments", [])
         required_files = item.get("required_files", [])
         if not isinstance(arguments, list) or not isinstance(required_files, list):
             raise RegistryError("preset arguments and required_files must be lists")
         presets.append(Preset(item["preset_id"], item["display_name"], item.get("description", ""),
-                              tuple(arguments), tuple(_config_path(value, base_dir) for value in required_files)))
+                              tuple(arguments), tuple(_config_path(value, base_dir) for value in required_files),
+                              _config_path(item["config_path"], base_dir) if "config_path" in item else None))
     fields = []
     raw_fields = raw.get("runtime_fields", [])
     if not isinstance(raw_fields, list):
