@@ -310,6 +310,7 @@ args = parser.parse_args()
 state = "READY"
 started = None
 finish_at = None
+terminal_at = None
 cache = {}
 def status():
     elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
@@ -318,6 +319,8 @@ def status():
             "exit_status": 0 if state in ("COMPLETE", "ABORTED") else None,
             "capabilities": {"start": state == "READY", "stop": state == "RUNNING",
                              "abort": state in ("PREPARING", "READY", "RUNNING")}}
+def response(request_id, ok, **fields):
+    return {"schema_version": 1, "request_id": request_id, "ok": ok, **fields}
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(args.control_socket)
 server.listen(4)
@@ -327,7 +330,12 @@ try:
     done = False
     while not done:
         if state == "FINISHING" and time.monotonic() >= finish_at:
-            state = "COMPLETE"
+            state, terminal_at = "COMPLETE", time.monotonic()
+        if state == "ABORTED" and terminal_at is None:
+            terminal_at = time.monotonic()
+        if state in ("COMPLETE", "ERROR", "ABORTED") and terminal_at is not None:
+            if time.monotonic() - terminal_at >= 0.5:
+                done = True
         try:
             client, _ = server.accept()
         except socket.timeout:
@@ -336,11 +344,15 @@ try:
             request = json.loads(client.makefile("rb").readline())
             command, request_id = request.get("command"), request.get("request_id")
             signature = json.dumps(request, sort_keys=True)
-            if command != "status" and request_id in cache:
-                cached_signature, cached_response = cache[request_id]
-                response = cached_response if cached_signature == signature else {"ok": False, "error": "request ID conflict"}
+            if type(request.get("schema_version")) is not int or request["schema_version"] != 1:
+                result = response(request_id, False, error={"code": "unsupported_schema", "message": "schema_version must be 1"})
+            elif not isinstance(request_id, str) or not request_id:
+                result = response(None, False, error={"code": "invalid_request", "message": "request_id required"})
             elif command == "status":
-                response = {"ok": True, "status": status()}
+                result = response(request_id, True, status=status())
+            elif request_id in cache:
+                cached_signature, cached_response = cache[request_id]
+                result = cached_response if cached_signature == signature else response(request_id, False, error="request ID conflict")
             else:
                 error = None
                 if command == "start" and state == "READY":
@@ -348,19 +360,15 @@ try:
                 elif command == "stop" and state == "RUNNING":
                     state, finish_at = "FINISHING", time.monotonic() + 0.1
                 elif command == "abort" and state in ("PREPARING", "READY", "RUNNING"):
-                    state = "ABORTED"
-                elif command == "shutdown" and state in ("COMPLETE", "ERROR", "ABORTED"):
-                    done = True
+                    state, terminal_at = "ABORTED", time.monotonic()
                 else:
                     error = "command unavailable"
                 if error:
-                    response = {"ok": False, "error": error}
+                    result = response(request_id, False, error=error)
                 else:
-                    response = {"schema_version": 1, "request_id": request_id, "ok": True,
-                                "state": state, "status": status()}
-                if command != "status" and request_id:
-                    cache[request_id] = (signature, response)
-            client.sendall(json.dumps(response).encode() + b"\\n")
+                    result = response(request_id, True, state=state, status=status())
+                cache[request_id] = (signature, result)
+            client.sendall(json.dumps(result).encode() + b"\\n")
 finally:
     server.close()
 '''

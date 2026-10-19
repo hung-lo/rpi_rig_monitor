@@ -18,6 +18,7 @@ ACTIVE_STATES = ("PREPARING", "READY", "RUNNING", "FINISHING")
 TERMINAL_STATES = ("COMPLETE", "ERROR", "ABORTED")
 CONTROL_ACTIONS = ("start", "stop", "abort", "bait_left", "bait_right")
 SUPERVISOR_SCHEMA_VERSION = 1
+ENGINE_CONTROL_SCHEMA_VERSION = 1
 
 
 class SupervisorError(Exception):
@@ -31,8 +32,9 @@ def default_state_dir():
 def _new_record():
     return {
         "supervisor_schema_version": SUPERVISOR_SCHEMA_VERSION,
-        "session_id": None, "protocol": None, "protocol_id": None, "preset_id": None,
-        "engine_protocol_id": None,
+        "session_id": None, "engine_session_id": None, "protocol": None,
+        "protocol_id": None, "preset_id": None, "engine_protocol_id": None,
+        "control_schema_version": 1,
         "protocol_display_name": None, "preset_display_name": None, "adapter_type": None,
         "subject_id": None, "working_directory": None, "launch_metadata": {},
         "state": "IDLE", "elapsed_s": None,
@@ -167,9 +169,25 @@ class SupervisorServer:
         endpoint = self.record.get("control_endpoint")
         if not endpoint:
             raise SupervisorError("experiment control endpoint is missing")
+        request = dict(request)
+        request.setdefault("schema_version", ENGINE_CONTROL_SCHEMA_VERSION)
+        request_id = request.setdefault("request_id", str(uuid.uuid4()))
+        if (type(request["schema_version"]) is not int or
+                request["schema_version"] != ENGINE_CONTROL_SCHEMA_VERSION):
+            raise SupervisorError("unsupported experiment control schema version")
+        if not isinstance(request_id, str) or not request_id:
+            raise SupervisorError("experiment control request_id is required")
         response = _rpc(endpoint, request, timeout=timeout)
+        if (type(response.get("schema_version")) is not int or
+                response["schema_version"] != ENGINE_CONTROL_SCHEMA_VERSION):
+            raise SupervisorError("experiment control response has an invalid schema version")
+        if response.get("request_id") != request_id:
+            raise SupervisorError("experiment control response request_id mismatch")
         if response.get("ok") is not True:
-            raise SupervisorError(response.get("error", "experiment rejected command"))
+            error = response.get("error", "experiment rejected command")
+            if isinstance(error, dict):
+                error = error.get("message", "experiment rejected command")
+            raise SupervisorError(str(error))
         return response
 
     def _refresh(self):
@@ -220,6 +238,7 @@ class SupervisorServer:
                 self._save_if_changed(previous)
                 return
             self.record["control_connected"] = True
+            self.record["engine_session_id"] = status.get("session_id")
             if self._adopting:
                 self.record["recovery_state"] = "ADOPTED"
             elif self.record.get("recovery_state") == "CONTROL_UNAVAILABLE":
@@ -237,12 +256,6 @@ class SupervisorServer:
                 self.record["recent_events"].insert(0, event)
                 del self.record["recent_events"][50:]
             if self.record["state"] in TERMINAL_STATES:
-                try:
-                    final = self._task_request({"command": "shutdown"}, timeout=0.5).get("state")
-                    if final:
-                        self.record["state"] = final
-                except (OSError, SupervisorError):
-                    pass
                 if self.process is not None:
                     try:
                         self.record["exit_status"] = self.process.wait(timeout=1.0)
@@ -303,7 +316,8 @@ class SupervisorServer:
         if self.record.get("session_id"):
             history.insert(0, {key: self.record.get(key) for key in (
                 "session_id", "protocol", "protocol_id", "preset_id", "protocol_display_name",
-                "engine_protocol_id", "preset_display_name", "adapter_type", "subject_id",
+                "engine_protocol_id", "engine_session_id", "control_schema_version",
+                "preset_display_name", "adapter_type", "subject_id",
                 "working_directory", "launch_metadata",
                 "state", "pid", "process_starttime", "process_boot_id",
                 "process_group_id", "process_session_id", "command", "config_path", "started_at_utc",
@@ -313,13 +327,18 @@ class SupervisorServer:
         self.record["control_acks"] = control_acks
         self.record.update({"session_id": session_id, "protocol": protocol_id, "protocol_id": protocol_id,
                             "preset_id": preset_id, "engine_protocol_id": launch.engine_protocol_id,
+                            "engine_session_id": None, "control_schema_version": 1,
                             "protocol_display_name": launch.protocol_display_name,
                             "preset_display_name": launch.preset_display_name, "adapter_type": launch.adapter_type,
                             "subject_id": launch.runtime_fields.get("subject_id"),
                             "working_directory": launch.cwd or str(Path(__file__).resolve().parents[1]),
                             "launch_metadata": {"runtime_fields": dict(launch.runtime_fields),
-                                                "working_directory": launch.cwd},
-                            "state": "PREPARING", "pid": None, "command": command, "config_path": None,
+                                                "working_directory": launch.cwd,
+                                                "config_path": launch.config_path,
+                                                "engine_protocol_id": launch.engine_protocol_id,
+                                                "control_schema_version": 1},
+                            "state": "PREPARING", "pid": None, "command": command,
+                            "config_path": launch.config_path,
                             "started_at": time.time(),
                             "started_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             "started_monotonic": time.monotonic(), "control_endpoint": endpoint,
@@ -366,6 +385,7 @@ class SupervisorServer:
                         status.get("state") not in ACTIVE_STATES + TERMINAL_STATES + ("IDLE",)):
                     raise SupervisorError("experiment control endpoint identity mismatch")
                 self.record["state"] = status.get("state", "PREPARING")
+                self.record["engine_session_id"] = status.get("session_id")
                 capabilities = status.get("capabilities", {})
                 self.record["capabilities"] = capabilities if isinstance(capabilities, dict) else {}
                 self.record["control_connected"] = True
@@ -423,6 +443,8 @@ class SupervisorServer:
             error = response.get("error", "experiment rejected command")
             self._remember_ack(request_id, signature, error=error)
             raise SupervisorError(error)
+        if response.get("state") in ACTIVE_STATES + TERMINAL_STATES:
+            self.record["state"] = response["state"]
         self._remember_ack(request_id, signature, ack=response)
         self._refresh()
         return {"ack": response, "status": self.snapshot()}

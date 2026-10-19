@@ -71,7 +71,7 @@ def main(argv=None):
             try:
                 connection, _ = server.accept()
             except TimeoutError:
-                if state["state"] in TERMINAL and now - terminal_at >= 5.0:
+                if state["state"] in TERMINAL and now - terminal_at >= 0.5:
                     break
                 continue
             with connection:
@@ -83,8 +83,6 @@ def main(argv=None):
                     connection.sendall(json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n")
                 except OSError:
                     pass
-                if request.get("command") == "shutdown" and state["state"] in TERMINAL:
-                    break
                 if request.get("command") == "stop":
                     finishing_at = time.monotonic() + 0.1
                 if request.get("command") == "abort":
@@ -99,27 +97,38 @@ def main(argv=None):
 
 
 def _handle(request, state):
-    command = request.get("command") if isinstance(request, dict) else None
+    if not isinstance(request, dict):
+        return _response(None, state, ok=False, error="request must be a JSON object")
+    command = request.get("command")
+    request_id = request.get("request_id")
+    if type(request.get("schema_version")) is not int or request["schema_version"] != 1:
+        return _response(request_id if isinstance(request_id, str) else None, state,
+                         ok=False, error="schema_version must be 1")
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        return _response(None, state, ok=False, error="request_id is required")
     current = state["state"]
     if command == "status":
-        return {"ok": True, "status": {key: value for key, value in state.items() if not key.startswith("_")}}
-    request_id = request.get("request_id")
-    if request_id is not None:
-        if not isinstance(request_id, str) or not request_id or len(request_id) > 64:
-            return {"ok": False, "error": "invalid request_id"}
-        signature = (command, request.get("channel"))
-        cached = state["_ack_cache"].get(request_id)
-        if cached:
-            if cached["signature"] != signature:
-                return {"ok": False, "error": "request_id reused for a different command"}
-            return cached["response"]
+        if set(request) != {"schema_version", "request_id", "command"}:
+            return _response(request_id, state, ok=False, error="status has unexpected fields")
+        return _response(request_id, state, ok=True)
+    expected = {"schema_version", "request_id", "command"}
+    if command == "deliver_bait":
+        expected.add("channel")
+    if set(request) != expected:
+        return _response(request_id, state, ok=False, error="unexpected command fields")
+    signature = (command, request.get("channel"))
+    cached = state["_ack_cache"].get(request_id)
+    if cached:
+        if cached["signature"] != signature:
+            return _response(request_id, state, ok=False,
+                             error="request_id reused for a different command")
+        return cached["response"]
 
     def reply(response):
-        if request_id is not None:
-            state["_ack_cache"][request_id] = {"signature": signature, "response": response}
-            state["_ack_order"].append(request_id)
-            if len(state["_ack_order"]) > 128:
-                del state["_ack_cache"][state["_ack_order"].pop(0)]
+        state["_ack_cache"][request_id] = {"signature": signature, "response": response}
+        state["_ack_order"].append(request_id)
+        if len(state["_ack_order"]) > 128:
+            del state["_ack_cache"][state["_ack_order"].pop(0)]
         return response
 
     if command == "start" and current == "READY":
@@ -127,27 +136,33 @@ def _handle(request, state):
         state["started_at_monotonic"] = time.monotonic()
         state["recent_event"] = {"event": "task_started", "id": str(uuid.uuid4())}
         print("fake task started", flush=True)
-        return reply({"ok": True, "state": "RUNNING"})
+        return reply(_response(request_id, state, ok=True))
     if command == "stop" and current == "RUNNING":
         state["state"] = "FINISHING"
         state["eta_s"] = 0.0
         state["recent_event"] = {"event": "operator_stop"}
         print("fake task graceful stop requested", flush=True)
-        return reply({"ok": True, "state": "FINISHING"})
+        return reply(_response(request_id, state, ok=True))
     if command == "abort" and current in ("PREPARING", "READY", "RUNNING"):
         state["state"] = "ABORTED"
         state["eta_s"] = None
         state["exit_status"] = 0
         state["recent_event"] = {"event": "operator_abort"}
         print("fake task aborted", flush=True)
-        return reply({"ok": True, "state": "ABORTED"})
+        return reply(_response(request_id, state, ok=True))
     if command == "deliver_bait" and current == "READY" and request.get("channel") in ("left", "right"):
         state["recent_event"] = {"event": "operator_bait", "channel": request["channel"]}
         print(f"OPERATOR_REWARD channel={request['channel']}", flush=True)
-        return reply({"ok": True, "accepted": "operator_bait", "channel": request["channel"]})
-    if command == "shutdown" and current in TERMINAL:
-        return {"ok": True, "state": current}
-    return reply({"ok": False, "error": f"command unavailable in {current}"})
+        return reply(_response(request_id, state, ok=True,
+                               accepted="operator_bait", channel=request["channel"]))
+    return reply(_response(request_id, state, ok=False,
+                           error=f"command unavailable in {current}"))
+
+
+def _response(request_id, state, ok, **fields):
+    status = {key: value for key, value in state.items() if not key.startswith("_")}
+    return {"schema_version": 1, "request_id": request_id, "ok": ok,
+            "state": state["state"], "status": status, **fields}
 
 
 def _read_json(connection):
