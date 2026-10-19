@@ -18,8 +18,12 @@ in that session's `plan.json`, `selected_image_table.json`, and
 `asset_manifest.json`, and the canonical file hash matches the selected-table
 hash. Natural Images uses `RIG_MONITOR_NATURAL_IMAGE_DIR` (default
 `/home/pi/rpi_vstim_suite/assets/natural_images/stringer_natimg2800_center_crop`);
-the legacy preview route keeps its existing `RIG_MONITOR_IMAGE_DIR`. The
-read-only endpoint is:
+real sessions are resolved only under `RIG_MONITOR_SESSION_ROOT` (default
+`/mnt/behavbox_ssd/sessions`), and operator simulations only under
+`RIG_MONITOR_SIMULATION_SESSION_ROOT` (default
+`/var/lib/rpi-rig-monitor/simulations`). Both roots are server configuration;
+the endpoint rejects a session ID present in both. The legacy preview route
+keeps its existing `RIG_MONITOR_IMAGE_DIR`. The read-only endpoint is:
 
 ```text
 /api/stimulus-image/<session_id>/<natimg_center_NNNN.png>
@@ -180,15 +184,24 @@ cd /home/pi/rpi_rig_monitor
 ```
 
 The Flask process must use the new code and the default
-`RIG_MONITOR_NATURAL_IMAGE_DIR` and `RIG_MONITOR_SESSION_ROOT` values, or set
-those environment variables explicitly. The local repo does not define the
-Flask systemd unit name; identify the site's existing unit before restarting
-it. Restart services only after confirming the rig is idle:
+`RIG_MONITOR_NATURAL_IMAGE_DIR`, `RIG_MONITOR_SESSION_ROOT`, and
+`RIG_MONITOR_SIMULATION_SESSION_ROOT` values, or set those environment
+variables explicitly. The Pi dashboard was launched manually with
+`python3 run_monitor.py`; this repository does not confirm a Flask systemd unit.
+Restart only after confirming the rig is idle. Restart the real systemd
+supervisor with:
 
 ```bash
 sudo systemctl restart rpi-rig-supervisor.service
-sudo systemctl restart <existing-Flask-monitor-unit>
 ```
+
+Restart the manually launched Flask dashboard in the terminal/session that
+started it: stop that `python3 run_monitor.py` process, then rerun the same
+command from `/home/pi/rpi_rig_monitor` with the same environment. Reuse the
+existing `RIG_MONITOR_CONTROL_TOKEN`; do not generate a replacement. If the
+dashboard was started from a new shell, load that existing secret from its
+local source before launching rather than putting it in shell history. Reenter
+the same token in the browser after a page reload.
 
 In the dashboard, select **Pi5 hardware smoke + licks**, enter the subject ID,
 PREPARE and verify READY, then START. Runtime session ID, control socket,
@@ -198,7 +211,8 @@ telemetry port, and control-state file remain supervisor-managed.
 
 After safely ending any run, remove only `pi5_hardware_smoke_licks` from the
 trusted registry's `natural_images.presets`, validate the JSON, then restart
-the supervisor and existing Flask unit. To restore the pre-change source
+the supervisor and manually launched Flask dashboard using the procedures
+above. To restore the pre-change source
 baseline, first preserve any local changes and use the recorded baseline
 commits (never `reset --hard` or `git clean`):
 
@@ -206,7 +220,6 @@ commits (never `reset --hard` or `git clean`):
 git -C /home/pi/rpi_vstim_suite switch --detach 9931500ab4d603ea412e119b065372ba3c887d3d
 git -C /home/pi/rpi_rig_monitor switch --detach fa0c2e74b6f07b6965c695a434341aa5d7952b22
 sudo systemctl restart rpi-rig-supervisor.service
-sudo systemctl restart <existing-Flask-monitor-unit>
 ```
 
 ## Physical validation still required

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file
@@ -19,7 +20,8 @@ _MAX_SESSION_INDEX_BYTES = 4_000_000
 _MAX_NATURAL_IMAGE_BYTES = 1_000_000
 
 def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=None,
-               control_token=None, session_root=None, natural_image_dir=None) -> Flask:
+               control_token=None, session_root=None, natural_image_dir=None,
+               simulation_session_root=None) -> Flask:
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     control_token = control_token or os.environ.get("RIG_MONITOR_CONTROL_TOKEN")
 
@@ -134,12 +136,35 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
         if (not _SESSION_ID_RE.fullmatch(session_id) or session_id in {".", ".."}
                 or not _IMAGE_NAME_RE.fullmatch(filename)
                 or int(filename[14:18]) >= 2800 or not natural_image_dir
-                or not session_root):
+                or not (session_root or simulation_session_root)):
             return "", 404
         try:
-            sessions = Path(session_root).resolve(strict=True)
             assets = Path(natural_image_dir).resolve(strict=True)
-            session = (sessions / session_id).resolve(strict=True)
+            roots = []
+            for configured_root in (session_root, simulation_session_root):
+                if configured_root:
+                    try:
+                        root = Path(configured_root).resolve(strict=True)
+                        if stat.S_ISDIR(root.stat().st_mode) and root not in roots:
+                            roots.append(root)
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        return "", 404
+            matches = []
+            for root in roots:
+                candidate = root / session_id
+                try:
+                    candidate.lstat()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return "", 404
+                matches.append((root, candidate))
+            if len(matches) != 1:
+                return "", 404
+            sessions, session = matches[0]
+            session = session.resolve(strict=True)
             session.relative_to(sessions)
             table_path = (session / "selected_image_table.json").resolve(strict=True)
             table_path.relative_to(session)

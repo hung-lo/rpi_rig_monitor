@@ -1,7 +1,9 @@
 import hashlib
 import json
 import os
+import shutil
 import struct
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +81,12 @@ def _write_selected_session(session_root, session_id, filename, image_bytes):
 
 
 class WebTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js is unavailable")
+    def test_lick_onset_highlight_clears_after_stale_or_session_change(self):
+        script = Path(__file__).resolve().with_name("test_dashboard.js")
+        result = subprocess.run(["node", "--test", str(script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_dashboard_and_json_routes(self):
         client = create_app(MonitorState(), HealthyReceiver()).test_client()
         dashboard = client.get("/")
@@ -236,6 +244,39 @@ class WebTests(unittest.TestCase):
             malformed = client.get(f"/api/stimulus-image/session-7/{filename}")
             self.assertEqual(malformed.status_code, 404)
             self.assertEqual(malformed.data, b"")
+
+    def test_selected_image_serves_both_trusted_roots_and_rejects_ambiguity(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            assets, sessions, simulations = root / "assets", root / "sessions", root / "simulations"
+            assets.mkdir()
+            sessions.mkdir()
+            simulations.mkdir()
+            filename = "natimg_center_0007.png"
+            image_bytes = _png_bytes()
+            (assets / filename).write_bytes(image_bytes)
+            _write_selected_session(sessions, "hardware-session", filename, image_bytes)
+            _write_selected_session(simulations, "simulation-session", filename, image_bytes)
+            client = create_app(
+                MonitorState(), HealthyReceiver(), session_root=sessions,
+                simulation_session_root=simulations, natural_image_dir=assets,
+            ).test_client()
+            for session_id in ("hardware-session", "simulation-session"):
+                response = client.get(f"/api/stimulus-image/{session_id}/{filename}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data, image_bytes)
+
+            _write_selected_session(sessions, "shared-session", filename, image_bytes)
+            _write_selected_session(simulations, "shared-session", filename, image_bytes)
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/shared-session/{filename}"
+            ).status_code, 404)
+
+            outside_session = _write_selected_session(Path(outside), "escaped", filename, image_bytes)
+            (simulations / "escape-session").symlink_to(outside_session, target_is_directory=True)
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/escape-session/{filename}"
+            ).status_code, 404)
 
     def test_selected_image_endpoint_rejects_path_escape_and_bad_session_mapping(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:

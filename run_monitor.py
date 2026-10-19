@@ -36,7 +36,9 @@ def main() -> int:
     if not args.control_token:
         LOGGER.warning("Browser controls disabled; set RIG_MONITOR_CONTROL_TOKEN to enable them")
     app = create_app(state, receiver, image_dir=args.image_dir,
-                     session_root=args.session_root, natural_image_dir=args.natural_image_dir,
+                     session_root=args.session_root,
+                     simulation_session_root=args.simulation_session_root,
+                     natural_image_dir=args.natural_image_dir,
                      supervisor=supervisor,
                      control_token=args.control_token)
     try:

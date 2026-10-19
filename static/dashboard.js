@@ -170,6 +170,10 @@
       var channel = licks && licks.channels && licks.channels[name];
       var status = channel && channel.status;
       var available = channel && channel.available === true;
+      var onset = $("lick-" + name + "-onset");
+      var recent = available && status === "available" && fresh && !ended &&
+        finiteNumber(channel.last_lick_age_sec) && channel.last_lick_age_sec >= 0 &&
+        channel.last_lick_age_sec <= 1.5;
       var label = status === "not_requested" ? "GPIO not requested" :
         status === "not_configured" ? "Not configured" :
         status === "session_ended" || ended ? "Session ended" :
@@ -177,14 +181,13 @@
       $("lick-" + name + "-status").textContent = label;
       if (!available || !fresh || ended) {
         $("lick-" + name + "-contact").textContent = !fresh ? "Unknown (stale)" : "—";
-        $("lick-" + name + "-onset").textContent = "—";
+        onset.textContent = "—";
       } else {
         $("lick-" + name + "-contact").textContent = channel.contact_active === true ? "Active" :
           channel.contact_active === false ? "Inactive" : "Unknown";
-        var recent = finiteNumber(channel.last_lick_age_sec) && channel.last_lick_age_sec <= 1.5;
-        $("lick-" + name + "-onset").textContent = recent ? "LICK" : "—";
-        $("lick-" + name + "-onset").className = recent ? "onset-active" : "";
+        onset.textContent = recent ? "LICK" : "—";
       }
+      onset.className = recent ? "onset-active" : "";
       ["recent", "total"].forEach(function (metric) {
         var field = metric === "recent" ? "recent_lick_count_2s" : "total_lick_onset_count_session";
         var hasCount = channel && finiteNumber(channel[field]);

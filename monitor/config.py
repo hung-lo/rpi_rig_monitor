@@ -6,6 +6,7 @@ from typing import Any
 
 DEFAULT_IMAGE_DIR = "/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png"
 DEFAULT_NATURAL_IMAGE_DIR = "/home/pi/rpi_vstim_suite/assets/natural_images/stringer_natimg2800_center_crop"
+DEFAULT_SIMULATION_SESSION_ROOT = "/var/lib/rpi-rig-monitor/simulations"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     ))
     parser.add_argument("--session-root", default=os.environ.get(
         "RIG_MONITOR_SESSION_ROOT", "/mnt/behavbox_ssd/sessions"
+    ))
+    parser.add_argument("--simulation-session-root", default=os.environ.get(
+        "RIG_MONITOR_SIMULATION_SESSION_ROOT", DEFAULT_SIMULATION_SESSION_ROOT
     ))
     parser.add_argument("--supervisor-state-dir", default=os.environ.get("RIG_MONITOR_SUPERVISOR_STATE_DIR"))
     parser.add_argument("--supervisor-socket", default=os.environ.get("RIG_MONITOR_SUPERVISOR_SOCKET"))

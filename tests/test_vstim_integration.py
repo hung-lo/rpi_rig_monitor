@@ -1,5 +1,6 @@
 """Optional hardware-free integration against the real rpi-vstim console entry point."""
 
+import hashlib
 import json
 import os
 import socket
@@ -64,6 +65,32 @@ def _http(port, path, body=None, token=None):
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
+def _http_bytes(port, path):
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}")
+    try:
+        response = urllib.request.urlopen(request, timeout=2)
+    except urllib.error.HTTPError as exc:
+        response = exc
+    with response:
+        return response.status, response.headers.get_content_type(), response.read()
+
+
+def _write_selected_session(session_root, session_id, filename, image_bytes):
+    session = session_root / session_id
+    session.mkdir(parents=True)
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    (session / "plan.json").write_text(json.dumps({
+        "metadata": {"selected_images": [filename]},
+    }))
+    (session / "selected_image_table.json").write_text(json.dumps({
+        "images": [{"index": 1, "image": filename, "sha256": digest}],
+    }))
+    (session / "asset_manifest.json").write_text(json.dumps({
+        "entries": [{"relative_path": filename, "sha256": digest}],
+    }))
+    return session
+
+
 def _wait_until(predicate, timeout=8, message="condition was not reached"):
     deadline = time.monotonic() + timeout
     last_error = None
@@ -125,7 +152,8 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
         vstim_pythonpath.append(PILLOW_PATH)
     vstim_environment["PYTHONPATH"] = os.pathsep.join(vstim_pythonpath)
     version = subprocess.check_output([str(python), "--version"], text=True).strip()
-    assert version.startswith("Python 3.13."), version
+    if not version.startswith("Python 3.13."):
+        pytest.skip(f"VStim integration requires Python 3.13; configured interpreter is {version}")
     assert subprocess.run([str(executable), "--version"], env=vstim_environment,
                           check=True, capture_output=True).returncode == 0
 
@@ -135,6 +163,12 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
         socket_path = state_dir / "supervisor.sock"
         registry_path = root / "protocols.json"
         output_root = root / "vstim-output"
+        session_root = root / "real-sessions"
+        session_root.mkdir()
+        natural_image_dir = checkout / "assets/natural_images/stringer_natimg2800_center_crop"
+        fixture_filename = "natimg_center_0000.png"
+        fixture_bytes = (natural_image_dir / fixture_filename).read_bytes()
+        _write_selected_session(session_root, "fixture-real-session", fixture_filename, fixture_bytes)
         registry_entry = _make_registry(registry_path, executable, checkout, output_root)
         good_registry = registry_path.read_text()
         web_port = _port(socket.SOCK_STREAM)
@@ -169,17 +203,21 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             _wait_until(client.connect, message="supervisor did not start")
             return client
 
-        def start_web(udp_port):
+        def start_web(udp_port, stale_after_sec=5.0):
             nonlocal web
             web_env = environment.copy()
             web_env.update({
                 "RIG_MONITOR_CONTROL_TOKEN": token,
                 "RIG_MONITOR_UDP_HOST": "127.0.0.1",
                 "RIG_MONITOR_UDP_PORT": str(udp_port),
+                "RIG_MONITOR_STALE_AFTER_SEC": str(stale_after_sec),
                 "RIG_MONITOR_WEB_HOST": "127.0.0.1",
                 "RIG_MONITOR_WEB_PORT": str(web_port),
                 "RIG_MONITOR_SUPERVISOR_STATE_DIR": str(state_dir),
                 "RIG_MONITOR_SUPERVISOR_SOCKET": str(socket_path),
+                "RIG_MONITOR_SESSION_ROOT": str(session_root),
+                "RIG_MONITOR_SIMULATION_SESSION_ROOT": str(output_root),
+                "RIG_MONITOR_NATURAL_IMAGE_DIR": str(natural_image_dir),
             })
             web = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve().parents[1] / "run_monitor.py")],
@@ -246,6 +284,11 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
         try:
             client = start_supervisor()
             start_web(telemetry_port)
+            fixture_status, fixture_mimetype, served_fixture = _http_bytes(
+                web_port, f"/api/stimulus-image/fixture-real-session/{fixture_filename}"
+            )
+            assert fixture_status == 200 and fixture_mimetype == "image/png"
+            assert served_fixture == fixture_bytes
             status, protocols = _http(web_port, "/api/protocols")
             assert status == 200
             natural = next(item for item in protocols if item["protocol_id"] == "natural_images")
@@ -315,8 +358,15 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             )
             assert override_status == 400
 
-            _wait_until(lambda: _http(web_port, "/api/state")[1]["telemetry_freshness"] == "FRESH",
-                        message="simulation telemetry did not become fresh")
+            def read_fresh_api_state():
+                state = _http(web_port, "/api/state")[1]
+                return state if state["telemetry_freshness"] == "FRESH" else False
+
+            fresh_state = _wait_until(read_fresh_api_state,
+                                      message="simulation telemetry did not become fresh")
+            lick_channels = fresh_state["lick_state"]["channels"]
+            assert lick_channels["left"]["status"] == "not_requested"
+            assert lick_channels["right"]["status"] == "not_requested"
             session_id = snapshot["session_id"]
             stop_web()
             start_web(telemetry_port)
@@ -413,6 +463,39 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert running["eta_s"] is None or 0 <= running["eta_s"] <= 10
             assert running["capabilities"].get("start") is False
             assert running["capabilities"].get("stop") is True
+            simulation_session = output_root / session_id
+            _wait_until(lambda: (simulation_session / "selected_image_table.json").is_file(),
+                        message="VStim did not write its selected image table")
+            selected_images = json.loads(
+                (simulation_session / "selected_image_table.json").read_text()
+            )["images"]
+            selected_filenames = {item["image"] for item in selected_images}
+            observed = {"natural_image": False, "gray_after_image": False}
+
+            def observe_stimulus_transitions():
+                telemetry = _http(web_port, "/api/state")[1]
+                stimulus = telemetry.get("stimulus_state") or {}
+                if telemetry.get("session_id") != session_id or telemetry.get("telemetry_freshness") != "FRESH":
+                    return False
+                if stimulus.get("stimulus_kind") == "natural_image":
+                    filename = stimulus.get("image_filename")
+                    assert filename in selected_filenames
+                    assert stimulus.get("image_id") == Path(filename).stem
+                    assert isinstance(stimulus.get("sequence_index"), int)
+                    observed["natural_image"] = True
+                    status, mimetype, image_bytes = _http_bytes(
+                        web_port, f"/api/stimulus-image/{session_id}/{filename}"
+                    )
+                    assert status == 200 and mimetype == "image/png"
+                    assert image_bytes == (natural_image_dir / filename).read_bytes()
+                elif observed["natural_image"] and stimulus.get("stimulus_kind") == "gray":
+                    assert stimulus.get("image_id") is None
+                    assert stimulus.get("image_filename") is None
+                    observed["gray_after_image"] = True
+                return all(observed.values())
+
+            _wait_until(observe_stimulus_transitions, timeout=8,
+                        message="Natural Images telemetry missed image identity or gray transition")
             first_elapsed = running["elapsed_s"]
             time.sleep(0.15)
             progressed = client.request({"command": "status"})["status"]
@@ -423,10 +506,22 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert illegal["ok"] is False and illegal["error"]["code"] == "invalid_state"
 
             stop_web()
-            start_web(_port(socket.SOCK_DGRAM))
+            stale_telemetry_port = _port(socket.SOCK_DGRAM)
+            start_web(stale_telemetry_port, stale_after_sec=0.2)
             disconnected_telemetry = _http(web_port, "/api/state")[1]
             assert disconnected_telemetry["telemetry_freshness"] == "NONE"
             assert disconnected_telemetry["supervisor"]["state"] == "RUNNING"
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as telemetry_socket:
+                telemetry_socket.sendto(json.dumps({
+                    "type": "state", "session_id": session_id,
+                    "protocol": "natural-images", "phase": "RUNNING",
+                }).encode("utf-8"), ("127.0.0.1", stale_telemetry_port))
+            _wait_until(
+                lambda: _http(web_port, "/api/state")[1]["telemetry_freshness"] == "FRESH",
+                message="injected software telemetry did not become fresh",
+            )
+            time.sleep(0.3)
+            assert _http(web_port, "/api/state")[1]["telemetry_freshness"] == "STALE"
             client = restart_supervisor()
             adopted_running = client.request({"command": "status"})["status"]
             assert adopted_running["state"] == "RUNNING"
