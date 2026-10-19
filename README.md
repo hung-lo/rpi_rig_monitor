@@ -6,9 +6,11 @@ cameras, audio, reward timing, stimulus timing, and scientific event logging.
 The monitor's UDP telemetry is observational and may be lost; closing a browser
 or restarting Flask does not stop a supervised experiment.
 
-The current launch registry contains only a hardware-free fake task. Real
-protocol launch descriptors and engine control integration are future work.
-See [the engine interface proposal](docs/rpi_vstim_interface.md).
+The built-in registry exposes only a hardware-free fake task. An administrator
+may add trusted definitions for separately installed tasks; real VStim and
+Go/NoGo protocols are not registered. See
+[external protocol setup](docs/external_protocols.md) and
+[the engine interface proposal](docs/rpi_vstim_interface.md).
 
 ## Requirements and installation
 
@@ -65,6 +67,23 @@ authoritative for task lifecycle and capabilities. Telemetry freshness is
 independent and reported as `FRESH`, `STALE`, or `NONE`. Losing telemetry does
 not change task state.
 
+### Trusted protocol registry
+
+The supervisor always registers the fake task. Optional protocols load from a
+trusted JSON file configured with `RIG_MONITOR_PROTOCOL_REGISTRY` or
+`--protocol-registry`. The file contains fixed executable argv components,
+preset arguments, working directories, required files, and explicitly allowed
+runtime fields. Protect it as executable configuration. The browser receives
+only protocol/preset descriptions, availability, and field labels; it cannot
+set executable paths, argv, cwd, environment, configs, or control sockets.
+
+Missing optional executables, working directories, or preset files mark the
+affected protocol or preset unavailable and leave the monitor running. Invalid
+registry structure, unsafe IDs, duplicate IDs, and unsupported adapters fail
+supervisor startup. The public registry API does not expose machine paths or
+argv. See [`docs/external_protocols.md`](docs/external_protocols.md) for the
+file format.
+
 ### systemd deployment
 
 An example unit is in
@@ -107,7 +126,8 @@ and is never a command path.
 ## Hardware-free operator exercise
 
 Start the monitor with the token configured, open the dashboard, and enter the
-same token. Select **Fake task (hardware-free)**, prepare, then verify the
+same token. Select **Fake task (hardware-free)** and its **Standard** preset,
+enter an optional subject ID such as `example_mouse`, prepare, then verify the
 session reaches `READY`. Try Bait left while READY, start the task, then test
 Stop and Abort in separate sessions. The fake task writes operator bait as
 `OPERATOR_REWARD` to its session log and never accesses hardware.
@@ -167,5 +187,5 @@ hardware health; those values are reported by the experiment engine.
 python3 -m unittest discover -s tests -v
 ```
 
-All supervisor and lifecycle tests use only the fake task and local sockets; no
-GPIO, KMS, camera, or audio device is used.
+Supervisor, registry, and external-process fixture tests use local processes
+and sockets; no GPIO, KMS, camera, or audio device is used.

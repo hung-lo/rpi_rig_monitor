@@ -140,25 +140,39 @@ control request; the supervisor and engine deduplicate retries. Only explicitly
 registered protocol IDs and fixed command names are accepted; shell command
 strings are not part of the interface.
 
-## Minimum engine work for real integration
+## Registered task adapter
 
-The separate engine currently has protocol CLI entry points and a telemetry
-payload/publisher foundation, but the current runner does not yet expose the
-complete monitor contract. Real integration needs only:
+The monitor's trusted registry currently implements `unix_json_v1`. It starts a
+registered executable with structured argv and supplies `--control-socket`,
+`--session-id`, and `--telemetry-port`. The task owns its Unix socket and
+authoritative lifecycle. Its status response must contain `protocol`,
+`session_id`, `state`, and runtime `capabilities`; elapsed/ETA are optional.
+Mutating requests carry request IDs. The monitor checks `ok: true` on acknowledgements and
+validates identity/state fields in status, but it currently does not send or
+validate a control `schema_version` or require the response to echo a request
+ID. The task should deduplicate request IDs. This permissive v1 behavior must be
+made explicit or tightened before registering a real engine. The monitor does
+not use UDP for commands.
 
-1. publish observational lifecycle, health, integrity, session identity, and
-   protocol state without blocking timing-critical work;
-2. expose a local control socket owned by the experiment process, with
-   `status`, `start`, `stop`, `abort`, and only supported semantic operator
-   commands;
-3. advertise capabilities and reject commands that are invalid in the current
-   protocol/lifecycle;
-4. acknowledge commands, deduplicate request IDs, and log operator-triggered
-   rewards separately;
-5. include session ID and protocol in every control status response, and report
-   final state and exit information so the supervisor can verify adoption after
-   Flask or supervisor restarts.
+Stable registry IDs belong to the monitor. If an engine uses a different
+protocol ID, the registry stores that as `engine_protocol_id` and the supervisor
+verifies the status response against the saved engine ID. This keeps IDs such as
+`natural_images` stable while accommodating an engine-native name such as
+`natural-images`. The exact registry entry and resolved argv are persisted so
+registry edits cannot reinterpret an already-running session.
 
-The monitor currently launches only a hardware-free fake task. Real protocol
-launch descriptors, READY/preflight integration, and the final runtime socket
-path should be agreed with the engine before enabling hardware sessions.
+## Natural Images status
+
+Natural Images is not registered as runnable. The current
+`natural-images run --operator-control` path requires leased KMS during
+preparation and opens KMS after START, and it does not offer a hardware-free
+operator-control simulation mode. Before registration, VStim needs a safe
+simulation path that prepares to READY without physical display probing and
+runs START/STOP/ABORT through simulated display/timing services without GPIO,
+KMS, camera, or audio access. Then monitor-side integration can validate the
+existing control contract without hardware.
+
+The monitor's built-in fake task remains the only runnable protocol. External
+task repositories can use the same adapter without being imported by the
+monitor or merged into `rpi_vstim_suite`; see
+[`external_protocols.md`](external_protocols.md).
