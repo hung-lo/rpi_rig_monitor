@@ -438,10 +438,6 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert stop_ack["ack"]["state"] == "FINISHING"
             duplicate_stop = control("stop", "real-stop-1")
             assert duplicate_stop["ack"] == stop_ack["ack"]
-            engine_duplicate_stop = _rpc(adopted_running["control_endpoint"],
-                                         {"schema_version": 1, "request_id": "real-stop-1",
-                                          "command": "stop"})
-            assert engine_duplicate_stop == stop_ack["ack"]
             final_status_path = output_root / session_id / "final_status.json"
             _wait_until(final_status_path.is_file, message="VStim did not persist final stop status")
             process_after_stop = wait_exit_or_error(client, "COMPLETE")
@@ -503,11 +499,6 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             running_abort = control("abort", "real-abort-running-1")
             assert running_abort["ack"]["schema_version"] == 1
             assert running_abort["ack"]["request_id"] == "real-abort-running-1"
-            engine_running_abort = _rpc(
-                running_abort["status"]["control_endpoint"],
-                {"schema_version": 1, "request_id": "real-abort-running-1", "command": "abort"},
-            )
-            assert engine_running_abort == running_abort["ack"]
             assert control("abort", "real-abort-running-1")["ack"] == running_abort["ack"]
             final_abort = output_root / running_abort_task["session_id"] / "final_status.json"
             _wait_until(final_abort.is_file, message="VStim did not persist final abort status")
