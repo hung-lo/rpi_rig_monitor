@@ -8,13 +8,16 @@ DEFAULT_IMAGE_DIR = "/home/pi/stimulus_assets/stringer_natimg2800_center_crop_pn
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the read-only rig monitor")
+    parser = argparse.ArgumentParser(description="Run the Pi rig operator GUI")
     parser.add_argument("--udp-host", default=os.environ.get("RIG_MONITOR_UDP_HOST", "0.0.0.0"))
     parser.add_argument("--udp-port", type=int, default=int(os.environ.get("RIG_MONITOR_UDP_PORT", "5055")))
     parser.add_argument("--web-host", default=os.environ.get("RIG_MONITOR_WEB_HOST", "0.0.0.0"))
     parser.add_argument("--web-port", type=int, default=int(os.environ.get("RIG_MONITOR_WEB_PORT", "8080")))
     parser.add_argument("--stale-after-sec", type=float, default=float(os.environ.get("RIG_MONITOR_STALE_AFTER_SEC", "5.0")))
     parser.add_argument("--image-dir", default=os.environ.get("RIG_MONITOR_IMAGE_DIR", DEFAULT_IMAGE_DIR))
+    parser.add_argument("--supervisor-state-dir", default=os.environ.get("RIG_MONITOR_SUPERVISOR_STATE_DIR"))
+    parser.add_argument("--supervisor-socket", default=os.environ.get("RIG_MONITOR_SUPERVISOR_SOCKET"))
+    parser.set_defaults(control_token=os.environ.get("RIG_MONITOR_CONTROL_TOKEN"))
     return parser
 
 

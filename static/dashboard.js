@@ -268,13 +268,120 @@
     }
     renderHistory(data, isSpout, isNewProtocol);
   }
+  var operatorToken = "";
+  var protocolChoices = [];
+  var pendingControlIds = {};
+  var hardwareLabels = { display: "Display", camera_1: "Camera 1", camera_2: "Camera 2", storage: "Storage", gpio: "GPIO", irig: "IRIG", chrony: "Chrony", audio: "Audio" };
+  var integrityLabels = { event_drops: "Event drops", writer_errors: "Writer errors", kms_completed: "KMS completed", kms_long_intervals: "KMS long intervals", camera_errors: "Camera errors" };
+  function addStatus(parent, label, value) {
+    var item = document.createElement("div"), name = document.createElement("span"), content = document.createElement("strong");
+    name.textContent = label; content.textContent = text(value); item.appendChild(name); item.appendChild(content); parent.appendChild(item);
+  }
+  function statusValue(value) {
+    if (value === null || value === undefined) return "—";
+    if (typeof value === "object") { try { value = JSON.stringify(value); } catch (_error) { value = "[value]"; } }
+    return String(value).length > 100 ? String(value).slice(0, 97) + "…" : String(value);
+  }
+  function renderOperator(data) {
+    var rig = data.rig || {}, session = rig.session || {}, supervisor = data.supervisor || {};
+    var observedActive = ["PREPARING", "READY", "RUNNING", "FINISHING"].indexOf(session.state) >= 0 && session.id;
+    var managed = supervisor.available && supervisor.session_id && (!observedActive || session.id === supervisor.session_id);
+    var state = managed ? supervisor.state : (observedActive ? session.state + " · UNMANAGED" : (session.state || "IDLE"));
+    var sessionId = managed ? supervisor.session_id : session.id;
+    var protocol = managed ? supervisor.protocol : session.protocol;
+    var eta = managed ? supervisor.eta_s : session.eta_s;
+    var elapsed = managed ? supervisor.elapsed_s : session.elapsed_s;
+    var capabilities = supervisor.capabilities || {};
+    var hasToken = operatorToken.length > 0;
+    var canControl = data.control_enabled === true && supervisor.available === true && hasToken;
+    var terminal = ["IDLE", "COMPLETE", "ERROR", "ABORTED"].indexOf(supervisor.state) >= 0;
+    var unmanagedActive = observedActive && (!supervisor.available || session.id !== supervisor.session_id);
+    var prepareAllowed = canControl && terminal && !unmanagedActive && supervisor.process_running !== true;
+    $("operator-state").textContent = state || "IDLE";
+    $("operator-session-id").textContent = text(sessionId || "No session");
+    $("operator-protocol").textContent = text(protocol);
+    $("operator-elapsed").textContent = finiteNumber(elapsed) ? formatEta(elapsed) : "—";
+    $("operator-eta").textContent = finiteNumber(eta) ? formatEta(eta) : "—";
+    $("supervisor-connection").className = "status " + (supervisor.available ? "live" : "stale");
+    $("supervisor-connection").lastElementChild.textContent = supervisor.available ? "SUPERVISOR ONLINE" : "SUPERVISOR OFFLINE";
+    $("control-token").disabled = data.control_enabled !== true;
+    $("protocol-select").disabled = !prepareAllowed || protocolChoices.length === 0;
+    $("prepare-button").disabled = !prepareAllowed;
+    ["start", "stop", "abort", "bait_left", "bait_right"].forEach(function (name) {
+      var button = $(name.replace("_", "-") + "-button");
+      button.disabled = !canControl || capabilities[name] !== true;
+      if (name.indexOf("bait_") === 0) button.hidden = capabilities[name] !== true;
+    });
+    if (data.control_enabled !== true) $("control-help").textContent = "Browser controls are disabled until the server is configured with RIG_MONITOR_CONTROL_TOKEN.";
+    else if (!hasToken) $("control-help").textContent = "Enter the operator token configured on the monitor server to enable valid controls.";
+    else if (unmanagedActive) $("control-help").textContent = "An active telemetry session is not registered with the supervisor. New launches are blocked.";
+    else if (supervisor.process_running === true && terminal) $("control-help").textContent = "The previous experiment process has not exited. New launches are blocked.";
+    else $("control-help").textContent = "Commands are acknowledged by the supervisor and validated by the experiment process.";
+
+    var hardware = $("hardware-status"), hardwareValues = rig.hardware || {}; clear(hardware);
+    Object.keys(hardwareLabels).forEach(function (key) {
+      if ((key === "camera_1" || key === "camera_2") && Array.isArray(hardwareValues.cameras) && hardwareValues.cameras.length) return;
+      addStatus(hardware, hardwareLabels[key], hardwareValues[key]);
+    });
+    (hardwareValues.cameras || []).forEach(function (camera, index) {
+      if (!camera || typeof camera !== "object") return;
+      var cameraId = camera.camera_id || camera.id || camera.role || "Camera " + (index + 1);
+      var label = camera.role && camera.role !== cameraId ? cameraId + " (" + camera.role + ")" : cameraId;
+      addStatus(hardware, label, camera.state || "unknown");
+    });
+    var integrity = $("integrity-status"); clear(integrity);
+    Object.keys(integrityLabels).forEach(function (key) { addStatus(integrity, integrityLabels[key], (rig.integrity || {})[key]); });
+    var protocolNode = $("protocol-status"); clear(protocolNode);
+    var protocolState = rig.protocol || {}, protocolKeys = Object.keys(protocolState);
+    if (!protocolKeys.length) { var emptyProtocol = document.createElement("span"); emptyProtocol.className = "empty"; emptyProtocol.textContent = "No protocol state received"; protocolNode.appendChild(emptyProtocol); }
+    protocolKeys.slice(0, 12).forEach(function (key) { addStatus(protocolNode, key.replace(/_/g, " "), statusValue(protocolState[key])); });
+    var eventsNode = $("recent-events"); clear(eventsNode);
+    var events = (supervisor.recent_events || []).concat(data.recent_events || []).slice(0, 12);
+    if (!events.length) { var emptyEvents = document.createElement("span"); emptyEvents.className = "empty"; emptyEvents.textContent = "No events received"; eventsNode.appendChild(emptyEvents); }
+    events.forEach(function (item) {
+      var row = document.createElement("div"), label = document.createElement("strong"), detail = document.createElement("span");
+      label.textContent = item.event || item.type || "event";
+      var description = item.channel || item.session_id || (item.trial !== undefined ? "trial " + item.trial : "");
+      detail.textContent = description; row.appendChild(label); row.appendChild(detail); eventsNode.appendChild(row);
+    });
+  }
+  function loadProtocols() {
+    fetch("/api/protocols", { cache: "no-store" }).then(function (response) {
+      if (!response.ok) throw new Error("protocol registry unavailable");
+      return response.json();
+    }).then(function (items) {
+      protocolChoices = items.filter(function (item) { return item.available === true; });
+      var select = $("protocol-select"); clear(select);
+      protocolChoices.forEach(function (item) { var option = document.createElement("option"); option.value = item.id; option.textContent = item.display_name; select.appendChild(option); });
+      select.disabled = protocolChoices.length === 0;
+    }).catch(function () { $("protocol-select").innerHTML = "<option value=''>Supervisor unavailable</option>"; });
+  }
+  function sendControl(command) {
+    var requestId = pendingControlIds[command];
+    if (!requestId) {
+      requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      pendingControlIds[command] = requestId;
+    }
+    var body = { command: command, request_id: requestId }, receivedResponse = false;
+    if (command === "prepare") body.protocol = $("protocol-select").value;
+    $("control-message").textContent = "Sending " + command.replace(/_/g, " ") + "…";
+    fetch("/api/control", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + operatorToken }, body: JSON.stringify(body) })
+      .then(function (response) { return response.json().then(function (value) { receivedResponse = true; if (!response.ok) throw new Error(value.error || "command rejected"); return value; }); })
+      .then(function () { delete pendingControlIds[command]; $("control-message").textContent = command.replace(/_/g, " ") + " acknowledged"; poll(); })
+      .catch(function (error) { if (receivedResponse) delete pendingControlIds[command]; $("control-message").textContent = error.message; });
+  }
+  $("control-token").addEventListener("input", function (event) { operatorToken = event.target.value; poll(); });
+  [["prepare-button", "prepare"], ["start-button", "start"], ["stop-button", "stop"], ["abort-button", "abort"], ["bait-left-button", "bait_left"], ["bait-right-button", "bait_right"]].forEach(function (item) {
+    $(item[0]).addEventListener("click", function () { sendControl(item[1]); });
+  });
+  loadProtocols();
   var pollInFlight = false;
   function poll() {
     if (pollInFlight) return;
     pollInFlight = true;
     fetch("/api/state", { cache: "no-store" })
       .then(function (response) { return response.json(); })
-      .then(render)
+      .then(function (data) { render(data); renderOperator(data); })
       .catch(function () {
         $("connection").className = "status stale";
         $("connection").lastElementChild.textContent = "STALE";

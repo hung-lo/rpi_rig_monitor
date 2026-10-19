@@ -1,20 +1,40 @@
-import unittest
 import os
 import tempfile
+import unittest
 from pathlib import Path
 
 from monitor.state import MonitorState
 from monitor.web import create_app
 
 
-class HealthyReceiver(object):
+class HealthyReceiver:
     def health_status(self):
         return "ok"
 
 
-class FailedReceiver(object):
+class FailedReceiver:
     def health_status(self):
         return "failed"
+
+
+class FakeSupervisor:
+    def __init__(self):
+        self.calls = []
+        self.status = {"session_id": None, "protocol": None, "state": "IDLE",
+                       "capabilities": {}, "recent_events": [], "process_running": False}
+
+    def request(self, request):
+        self.calls.append(request)
+        if request["command"] == "status":
+            return {"ok": True, "status": self.status}
+        if request["command"] == "protocols":
+            return {"ok": True, "protocols": [{"id": "fake", "display_name": "Fake task", "available": True}]}
+        if request["command"] == "control":
+            if request["action"] == "prepare":
+                self.status.update({"session_id": "fake-1", "protocol": request["protocol"],
+                                    "state": "READY", "capabilities": {"start": True, "abort": True}})
+            return {"ok": True, "result": {"ack": {"ok": True}, "status": self.status}}
+        return {"ok": False, "error": "unknown"}
 
 
 class WebTests(unittest.TestCase):
@@ -26,19 +46,24 @@ class WebTests(unittest.TestCase):
                            "unrewarded-cue-anticipatory-rate", "low-prob-cue-anticipatory-rate",
                            "water-delivered", "water-likely-consumed", "reward-volume",
                            "stimulus-preview-empty"):
-            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+            self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
         for element_id in ("spout-reward-progress", "spout-retrieval-rate", "spout-recent20",
                            "spout-criterion", "spout-training-water", "spout-bait-water",
                            "spout-total-water", "spout-total-licks", "spout-bait-drops",
                            "spout-bait-contact", "spout-recent-licks", "spout-last-lick",
                            "spout-lick-status", "last-panel-title", "history-title"):
-            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+            self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
         for element_id in ("contingency-phase", "phase-contingency", "partial-reversal-behavior-view",
                            "new-reward-contact-rate", "r-plus-anticipatory-rate", "r-minus-anticipatory-rate", "r-discrimination",
                            "r-plus-omission-rate", "reversal-readiness", "high-r-plus-rate", "high-r-minus-rate",
                            "medium-r-plus-rate", "medium-r-minus-rate", "low-r-minus-rate",
                            "partial-reversal-history-head"):
-            self.assertIn(('id="%s"' % element_id).encode("utf-8"), dashboard.data)
+            self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
+        for element_id in ("operator-state", "operator-elapsed", "operator-eta", "hardware-status",
+                           "integrity-status", "protocol-status", "recent-events", "protocol-select",
+                           "prepare-button", "start-button", "stop-button", "abort-button",
+                           "bait-left-button", "bait-right-button", "control-token"):
+            self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
 
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
         css = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.css").read_text()
@@ -61,12 +86,18 @@ class WebTests(unittest.TestCase):
         self.assertIn('data.phase === "MANUAL_START_DELAY"', javascript)
         self.assertIn('window.setInterval(poll, 300)', javascript)
         self.assertIn("pollInFlight", javascript)
+        self.assertIn("Array.isArray(hardwareValues.cameras)", javascript)
+        self.assertIn('if (!camera || typeof camera !== "object") return;', javascript)
         self.assertIn(b"No active stimulus", dashboard.data)
         self.assertIn(b"Stimulus image unavailable", dashboard.data)
         state_response = client.get("/api/state")
         self.assertEqual(state_response.status_code, 200)
         self.assertIn("connected", state_response.get_json())
-        self.assertEqual(client.get("/health").get_json(), {"status": "ok", "udp_receiver": "ok"})
+        self.assertEqual(client.get("/health").get_json(), {"status": "ok", "udp_receiver": "ok", "supervisor": "ok"})
+        self.assertIn("rig", state_response.get_json())
+        self.assertIn("hardware", state_response.get_json()["rig"])
+        self.assertEqual(state_response.get_json()["control_enabled"], False)
+        self.assertEqual(client.post("/api/control", json={"command": "prepare"}).status_code, 503)
 
     def test_reward_volume_display_has_no_train_suffix(self):
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
@@ -108,6 +139,52 @@ class WebTests(unittest.TestCase):
                 secret.write(b"not for the dashboard")
             response = create_app(MonitorState(), HealthyReceiver(), image_dir=image_dir).test_client().get("/stimulus-image/../secret.txt")
             self.assertEqual(response.status_code, 404)
+
+    def test_control_requires_bearer_token_and_forwards_protocol_selection(self):
+        supervisor = FakeSupervisor()
+        client = create_app(MonitorState(), HealthyReceiver(), supervisor=supervisor,
+                            control_token="secret").test_client()
+        self.assertEqual(client.get("/api/protocols").get_json()[0]["id"], "fake")
+        self.assertEqual(client.post("/api/control", json={"command": "prepare", "protocol": "fake"}).status_code, 401)
+        body = {"command": "prepare", "protocol": "fake", "request_id": "request-1"}
+        response = client.post("/api/control", json=body,
+                               headers={"Authorization": "Bearer secret"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ack"]["ok"])
+        self.assertEqual(supervisor.calls[-1], {"command": "control", "action": "prepare", "protocol": "fake",
+                                                "request_id": "request-1"})
+        self.assertEqual(client.post("/api/control", json={"command": "prepare", "protocol": "other",
+                                                            "request_id": "request-2"},
+                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
+        self.assertEqual(client.post("/api/control", json={"command": "start"},
+                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
+
+    def test_unmanaged_active_telemetry_blocks_duplicate_prepare(self):
+        state = MonitorState()
+        state.update({"type": "state", "session_id": "external", "protocol": "natural_images",
+                      "lifecycle": "RUNNING"}, received_at=1.0)
+        supervisor = FakeSupervisor()
+        client = create_app(state, HealthyReceiver(), supervisor=supervisor,
+                            control_token="secret").test_client()
+        response = client.post("/api/control", json={"command": "prepare", "protocol": "fake",
+                                                      "request_id": "external-session-prepare"},
+                               headers={"Authorization": "Bearer secret"})
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn("control", [call["command"] for call in supervisor.calls])
+
+    def test_stale_active_telemetry_for_managed_session_does_not_block_next_prepare(self):
+        state = MonitorState()
+        state.update({"type": "state", "session_id": "managed-1", "protocol": "fake",
+                      "lifecycle": "RUNNING"}, received_at=1.0)
+        supervisor = FakeSupervisor()
+        supervisor.status.update({"session_id": "managed-1", "protocol": "fake", "state": "COMPLETE"})
+        client = create_app(state, HealthyReceiver(), supervisor=supervisor,
+                            control_token="secret").test_client()
+        response = client.post("/api/control", json={"command": "prepare", "protocol": "fake",
+                                                      "request_id": "next-prepare"},
+                               headers={"Authorization": "Bearer secret"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(supervisor.calls[-1]["command"], "control")
 
 
 if __name__ == "__main__":

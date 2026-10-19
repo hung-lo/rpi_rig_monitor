@@ -10,12 +10,51 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">READ-ONLY OBSERVATION</p>
+        <p class="eyebrow">PI RIG OPERATOR</p>
         <h1>Rig Monitor</h1>
       </div>
       <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span> · Contingency: <span id="contingency-phase">—</span></p>
-      <div id="connection" class="status stale"><span class="dot"></span><span>STALE</span></div>
+      <div class="connections"><div id="connection" class="status stale"><span class="dot"></span><span>TELEMETRY STALE</span></div><div id="supervisor-connection" class="status stale"><span class="dot"></span><span>SUPERVISOR OFFLINE</span></div></div>
     </header>
+
+    <section class="card operator-panel">
+      <div class="operator-heading">
+        <div><p class="eyebrow">SESSION CONTROL</p><h2 id="operator-state">IDLE</h2></div>
+        <div class="operator-session"><span id="operator-session-id">No session</span><span id="operator-protocol">—</span></div>
+      </div>
+      <div class="operator-metrics"><div><span>Elapsed</span><strong id="operator-elapsed">—</strong></div><div><span>ETA</span><strong id="operator-eta">—</strong></div></div>
+      <div class="controls-row">
+        <label for="protocol-select">Protocol</label><select id="protocol-select" disabled><option value="">Loading protocols…</option></select>
+        <label for="control-token">Control token</label><input id="control-token" type="password" autocomplete="off" aria-describedby="control-help">
+        <button id="prepare-button" type="button" disabled>Prepare session</button>
+        <button id="start-button" type="button" disabled>Start task</button>
+        <button id="stop-button" type="button" disabled>Stop</button>
+        <button id="abort-button" class="danger" type="button" disabled>Abort</button>
+        <button id="bait-left-button" type="button" hidden disabled>Bait left</button>
+        <button id="bait-right-button" type="button" hidden disabled>Bait right</button>
+      </div>
+      <p id="control-help" class="control-help">Controls require a server-configured token. Commands go through the supervisor and experiment control socket.</p>
+      <p id="control-message" class="control-message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="operator-summary">
+      <article class="card">
+        <p class="eyebrow">HARDWARE</p>
+        <div id="hardware-status" class="status-grid"></div>
+      </article>
+      <article class="card">
+        <p class="eyebrow">INTEGRITY</p>
+        <div id="integrity-status" class="status-grid"></div>
+      </article>
+      <article class="card protocol-status-card">
+        <p class="eyebrow">PROTOCOL STATUS</p>
+        <div id="protocol-status" class="status-grid"><span class="empty">No protocol state received</span></div>
+      </article>
+      <article class="card recent-events-card">
+        <p class="eyebrow">RECENT EVENTS</p>
+        <div id="recent-events" class="event-list"><span class="empty">No events received</span></div>
+      </article>
+    </section>
 
     <section class="grid top-row">
       <article class="card stimulus-card">
@@ -60,7 +99,7 @@
           <div class="metric-row"><span>Water delivered</span><strong id="new-water-delivered">—</strong></div>
           <div class="metric-row"><span>Likely consumed</span><strong id="new-water-likely-consumed">—</strong></div>
           <div class="metric-row"><span>Reward volume</span><strong id="new-reward-volume">—</strong></div>
-          <p class="behavior-help">R+ and R− rates use Box151 cumulative counters. Readiness is operator feedback only; it never changes the task.</p>
+          <p class="behavior-help">R+ and R− rates use experiment cumulative counters. Readiness is operator feedback only; it never changes the task.</p>
         </div>
         </div>
         <div id="spout-session-view" class="protocol-view" hidden>
@@ -89,7 +128,7 @@
             <div class="metric-row"><span>Status</span><strong id="spout-lick-status">quiet</strong></div>
             <div class="metric-row"><span>Training</span><strong id="spout-training-status">Waiting for operator</strong></div>
           </div>
-          <p class="behavior-help">Retrieval and water values come from Box151 telemetry. Lick status is operator feedback; dashboard timing is not scientific timing.</p>
+          <p class="behavior-help">Retrieval and water values come from experiment telemetry. Lick status is operator feedback; dashboard timing is not scientific timing.</p>
         </div>
       </article>
       <article class="card last-trial-card">
@@ -132,7 +171,7 @@
         </table>
       </div>
     </section>
-    <footer>Telemetry is observational only. The monitor sends no commands to experiment hardware.</footer>
+    <footer>Telemetry is observational and may be lost. The experiment engine remains the sole owner of hardware, timing, and scientific event logging.</footer>
   </main>
   <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
