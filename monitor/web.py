@@ -5,8 +5,9 @@ import os
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
+from .registry import PROTOCOL_ID_RE
 from .state import MonitorState
-from .supervisor import PROTOCOLS, SupervisorError
+from .supervisor import SupervisorError
 
 
 def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=None,
@@ -58,10 +59,17 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
             return jsonify({"error": "invalid control request"}), 400
         command = body["command"]
         request_id = body.get("request_id")
-        if (not isinstance(request_id, str) or not request_id or len(request_id) > 64 or
-                set(body) - {"command", "protocol", "request_id"} or
-                (command == "prepare" and body.get("protocol") not in PROTOCOLS) or
-                (command != "prepare" and "protocol" in body)):
+        if not isinstance(request_id, str) or not request_id or len(request_id) > 64:
+            return jsonify({"error": "invalid control request"}), 400
+        if command == "prepare":
+            protocol_id, preset_id, fields = (body.get("protocol_id"), body.get("preset_id"),
+                                                body.get("fields"))
+            if (set(body) != {"command", "request_id", "protocol_id", "preset_id", "fields"} or
+                    not isinstance(protocol_id, str) or not PROTOCOL_ID_RE.fullmatch(protocol_id) or
+                    not isinstance(preset_id, str) or not PROTOCOL_ID_RE.fullmatch(preset_id) or
+                    not isinstance(fields, dict)):
+                return jsonify({"error": "invalid control request"}), 400
+        elif set(body) != {"command", "request_id"}:
             return jsonify({"error": "invalid control request"}), 400
         if supervisor is None:
             return jsonify({"error": "supervisor unavailable"}), 503
@@ -76,7 +84,7 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
                     return jsonify({"error": "an active telemetry session is not registered with the supervisor"}), 409
         payload = {"command": "control", "action": command, "request_id": request_id}
         if command == "prepare":
-            payload["protocol"] = body["protocol"]
+            payload.update({"protocol_id": protocol_id, "preset_id": preset_id, "fields": fields})
         try:
             response = supervisor.request(payload)
         except SupervisorError as exc:
@@ -110,7 +118,11 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
 
 def _public_status(status):
     return {"available": True, "session_id": status.get("session_id"),
-            "protocol": status.get("protocol"), "state": status.get("state", "IDLE"),
+            "protocol": status.get("protocol"), "protocol_id": status.get("protocol_id", status.get("protocol")),
+            "preset_id": status.get("preset_id"),
+            "protocol_display_name": status.get("protocol_display_name"),
+            "preset_display_name": status.get("preset_display_name"),
+            "subject_id": status.get("subject_id"), "state": status.get("state", "IDLE"),
             "elapsed_s": status.get("elapsed_s"), "eta_s": status.get("eta_s"),
             "capabilities": status.get("capabilities", {}),
             "recent_events": status.get("recent_events", []),

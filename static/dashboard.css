@@ -22,6 +22,7 @@ h2 { margin: 0; font-size: clamp(1.35rem, 2.5vw, 2rem); }
 .operator-metrics span, .status-grid span { color: var(--muted); font-size: .78rem; }
 .operator-metrics strong, .status-grid strong { font-size: .92rem; overflow-wrap: anywhere; }
 .controls-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.runtime-fields { display: contents; }
 .controls-row label { color: var(--muted); font-size: .82rem; }
 .controls-row select, .controls-row input, .controls-row button { min-height: 38px; border: 1px solid #43515a; border-radius: 5px; padding: 7px 10px; background: #12191d; color: var(--text); font: inherit; }
 .controls-row input { width: 190px; }

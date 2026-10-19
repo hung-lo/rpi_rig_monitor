@@ -30,10 +30,17 @@ class FakeSupervisor:
         if request["command"] == "status":
             return {"ok": True, "status": self.status}
         if request["command"] == "protocols":
-            return {"ok": True, "protocols": [{"id": "fake", "display_name": "Fake task", "available": True}]}
+            return {"ok": True, "protocols": [{
+                "protocol_id": "fake", "display_name": "Fake task", "description": "Test task",
+                "adapter_type": "unix_json_v1", "available": True, "unavailable_reason": None,
+                "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
+                                    "type": "subject_id", "required": False}],
+                "presets": [{"preset_id": "standard", "display_name": "Standard",
+                             "description": "Test preset", "available": True, "unavailable_reason": None}],
+            }]}
         if request["command"] == "control":
             if request["action"] == "prepare":
-                self.status.update({"session_id": "fake-1", "protocol": request["protocol"],
+                self.status.update({"session_id": "fake-1", "protocol": request["protocol_id"],
                                     "state": "READY", "capabilities": {"start": True, "abort": True},
                                     "control_connected": True, "recovery_state": "CONNECTED"})
             return {"ok": True, "result": {"ack": {"ok": True}, "status": self.status}}
@@ -64,6 +71,7 @@ class WebTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
         for element_id in ("operator-state", "operator-elapsed", "operator-eta", "hardware-status",
                            "integrity-status", "protocol-status", "recent-events", "protocol-select",
+                           "preset-select", "runtime-fields",
                            "prepare-button", "start-button", "stop-button", "abort-button",
                            "bait-left-button", "bait-right-button", "control-token"):
             self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
@@ -147,24 +155,30 @@ class WebTests(unittest.TestCase):
         supervisor = FakeSupervisor()
         client = create_app(MonitorState(), HealthyReceiver(), supervisor=supervisor,
                             control_token="secret").test_client()
-        self.assertEqual(client.get("/api/protocols").get_json()[0]["id"], "fake")
-        self.assertEqual(client.post("/api/control", json={"command": "prepare", "protocol": "fake"}).status_code, 401)
-        body = {"command": "prepare", "protocol": "fake", "request_id": "request-1"}
+        self.assertEqual(client.get("/api/protocols").get_json()[0]["protocol_id"], "fake")
+        body = {"command": "prepare", "protocol_id": "fake", "preset_id": "standard",
+                "fields": {"subject_id": "example_mouse"}, "request_id": "request-1"}
+        self.assertEqual(client.post("/api/control", json=body).status_code, 401)
         response = client.post("/api/control", json=body,
                                headers={"Authorization": "Bearer secret"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["ack"]["ok"])
-        self.assertEqual(supervisor.calls[-1], {"command": "control", "action": "prepare", "protocol": "fake",
+        self.assertEqual(supervisor.calls[-1], {"command": "control", "action": "prepare",
+                                                "protocol_id": "fake", "preset_id": "standard",
+                                                "fields": {"subject_id": "example_mouse"},
                                                 "request_id": "request-1"})
-        self.assertEqual(client.post("/api/control", json={"command": "prepare", "protocol": "other",
-                                                            "request_id": "request-2"},
-                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
-        malicious = {"command": "prepare", "protocol": "fake; touch /tmp/should-not-exist",
-                     "request_id": "request-3", "shell": "touch /tmp/should-not-exist"}
-        self.assertEqual(client.post("/api/control", json=malicious,
-                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
-        self.assertEqual(client.post("/api/control", json={"command": "start"},
-                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
+        headers = {"Authorization": "Bearer secret"}
+        for name, value in (("executable", "/bin/sh"), ("argv", ["-c", "false"]),
+                            ("cwd", "/tmp"), ("env", {"PATH": "/tmp"}),
+                            ("control_socket", "/tmp/evil.sock"), ("config", "/etc/passwd"),
+                            ("command_text", "false")):
+            malicious = dict(body, request_id="attack-" + name, **{name: value})
+            self.assertEqual(client.post("/api/control", json=malicious, headers=headers).status_code, 400)
+        for field, value in (("protocol_id", "../../bin/bash"), ("preset_id", "; rm -rf /")):
+            malicious = dict(body, request_id="attack-id-" + field, **{field: value})
+            self.assertEqual(client.post("/api/control", json=malicious, headers=headers).status_code, 400)
+        self.assertEqual(client.post("/api/control", json={"command": "start", "request_id": "start-1",
+                                                            "argv": ["/bin/sh"]}, headers=headers).status_code, 400)
         self.assertEqual(client.post("/api/control?token=secret", json=body).status_code, 401)
         self.assertEqual(client.post("/api/control", json=body,
                                      headers={"Authorization": "Bearer invalid"}).status_code, 401)
@@ -195,7 +209,8 @@ class WebTests(unittest.TestCase):
         supervisor = FakeSupervisor()
         client = create_app(state, HealthyReceiver(), supervisor=supervisor,
                             control_token="secret").test_client()
-        response = client.post("/api/control", json={"command": "prepare", "protocol": "fake",
+        response = client.post("/api/control", json={"command": "prepare", "protocol_id": "fake",
+                                                      "preset_id": "standard", "fields": {},
                                                       "request_id": "external-session-prepare"},
                                headers={"Authorization": "Bearer secret"})
         self.assertEqual(response.status_code, 409)
@@ -209,7 +224,8 @@ class WebTests(unittest.TestCase):
         supervisor.status.update({"session_id": "managed-1", "protocol": "fake", "state": "COMPLETE"})
         client = create_app(state, HealthyReceiver(), supervisor=supervisor,
                             control_token="secret").test_client()
-        response = client.post("/api/control", json={"command": "prepare", "protocol": "fake",
+        response = client.post("/api/control", json={"command": "prepare", "protocol_id": "fake",
+                                                      "preset_id": "standard", "fields": {},
                                                       "request_id": "next-prepare"},
                                headers={"Authorization": "Bearer secret"})
         self.assertEqual(response.status_code, 200)

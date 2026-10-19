@@ -270,6 +270,7 @@
   }
   var operatorToken = "";
   var protocolChoices = [];
+  var runtimeFieldInputs = {};
   var pendingControlIds = {};
   var hardwareLabels = { display: "Display", camera_1: "Camera 1", camera_2: "Camera 2", storage: "Storage", gpio: "GPIO", irig: "IRIG", chrony: "Chrony", audio: "Audio" };
   var integrityLabels = { event_drops: "Event drops", writer_errors: "Writer errors", kms_completed: "KMS completed", kms_long_intervals: "KMS long intervals", camera_errors: "Camera errors" };
@@ -282,14 +283,61 @@
     if (typeof value === "object") { try { value = JSON.stringify(value); } catch (_error) { value = "[value]"; } }
     return String(value).length > 100 ? String(value).slice(0, 97) + "…" : String(value);
   }
+  function selectedProtocol() {
+    return protocolChoices.find(function (item) { return item.protocol_id === $("protocol-select").value; });
+  }
+  function selectedPreset() {
+    var protocol = selectedProtocol();
+    return protocol && protocol.presets.find(function (item) { return item.preset_id === $("preset-select").value; });
+  }
+  function runtimeFieldsValid() {
+    var protocol = selectedProtocol();
+    if (!protocol) return false;
+    return protocol.runtime_fields.every(function (field) {
+      var input = runtimeFieldInputs[field.name];
+      return !!input && (!field.required || input.checkValidity()) &&
+        (input.value === "" || input.checkValidity());
+    });
+  }
+  function renderPresets() {
+    var select = $("preset-select"), protocol = selectedProtocol(); clear(select);
+    if (!protocol) { select.appendChild(new Option("No available presets", "")); select.disabled = true; return; }
+    protocol.presets.forEach(function (preset) {
+      var option = new Option(preset.display_name + (preset.available ? "" : " · unavailable"), preset.preset_id);
+      option.disabled = preset.available !== true;
+      if (preset.unavailable_reason) option.title = preset.unavailable_reason;
+      select.appendChild(option);
+    });
+    var firstAvailable = protocol.presets.find(function (preset) { return preset.available === true; });
+    if (firstAvailable) select.value = firstAvailable.preset_id;
+    renderRuntimeFields();
+  }
+  function renderRuntimeFields() {
+    var container = $("runtime-fields"), protocol = selectedProtocol(); clear(container);
+    runtimeFieldInputs = {};
+    (protocol ? protocol.runtime_fields : []).forEach(function (field) {
+      if (field.type !== "subject_id") return;
+      var label = document.createElement("label"), input = document.createElement("input");
+      input.type = "text"; input.name = field.name; input.maxLength = 64;
+      input.pattern = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}"; input.required = field.required === true;
+      input.autocomplete = "off"; label.textContent = field.display_name; label.htmlFor = "runtime-" + field.name;
+      input.id = "runtime-" + field.name;
+      container.appendChild(label); container.appendChild(input); runtimeFieldInputs[field.name] = input;
+      input.addEventListener("input", renderOperatorFromLastState);
+    });
+  }
+  var lastOperatorState = null;
+  function renderOperatorFromLastState() { if (lastOperatorState) renderOperator(lastOperatorState); }
   function renderOperator(data) {
+    lastOperatorState = data;
     var rig = data.rig || {}, session = rig.session || {}, supervisor = data.supervisor || {};
     var observedActive = ["PREPARING", "READY", "RUNNING", "FINISHING"].indexOf(session.state) >= 0 && session.id;
     var managed = supervisor.available && supervisor.session_id && (!observedActive || session.id === supervisor.session_id);
     var state = managed ? supervisor.state : (observedActive ? session.state + " · UNMANAGED" :
       (!supervisor.available ? "UNKNOWN · SUPERVISOR OFFLINE" : (session.state || "IDLE")));
     var sessionId = managed ? supervisor.session_id : session.id;
-    var protocol = managed ? supervisor.protocol : session.protocol;
+    var protocol = managed ? (supervisor.protocol_display_name || supervisor.protocol_id || supervisor.protocol) : session.protocol;
+    if (managed && supervisor.preset_display_name) protocol += " · " + supervisor.preset_display_name;
     var eta = managed ? supervisor.eta_s : session.eta_s;
     var elapsed = managed ? supervisor.elapsed_s : session.elapsed_s;
     var capabilities = supervisor.capabilities || {};
@@ -298,7 +346,10 @@
     var taskControlAvailable = supervisor.control_connected === true;
     var terminal = ["IDLE", "COMPLETE", "ERROR", "ABORTED"].indexOf(supervisor.state) >= 0;
     var unmanagedActive = observedActive && (!supervisor.available || session.id !== supervisor.session_id);
-    var prepareAllowed = canControl && terminal && !unmanagedActive && supervisor.process_running !== true;
+    var protocolChoice = selectedProtocol(), presetChoice = selectedPreset();
+    var prepareAllowed = canControl && terminal && !unmanagedActive && supervisor.process_running !== true &&
+      !!protocolChoice && protocolChoice.available === true && !!presetChoice && presetChoice.available === true &&
+      runtimeFieldsValid();
     $("operator-state").textContent = state || "IDLE";
     $("operator-session-id").textContent = text(sessionId || "No session");
     $("operator-protocol").textContent = text(protocol);
@@ -309,6 +360,7 @@
       (supervisor.process_running && !taskControlAvailable ? "SUPERVISOR ONLINE · TASK CONTROL DEGRADED" : "SUPERVISOR ONLINE");
     $("control-token").disabled = data.control_enabled !== true;
     $("protocol-select").disabled = !prepareAllowed || protocolChoices.length === 0;
+    $("preset-select").disabled = !prepareAllowed || !protocolChoice || !protocolChoice.presets.length;
     $("prepare-button").disabled = !prepareAllowed;
     ["start", "stop", "abort", "bait_left", "bait_right"].forEach(function (name) {
       var button = $(name.replace("_", "-") + "-button");
@@ -356,10 +408,18 @@
       if (!response.ok) throw new Error("protocol registry unavailable");
       return response.json();
     }).then(function (items) {
-      protocolChoices = items.filter(function (item) { return item.available === true; });
+      protocolChoices = items;
       var select = $("protocol-select"); clear(select);
-      protocolChoices.forEach(function (item) { var option = document.createElement("option"); option.value = item.id; option.textContent = item.display_name; select.appendChild(option); });
-      select.disabled = protocolChoices.length === 0;
+      protocolChoices.forEach(function (item) {
+        var option = new Option(item.display_name + (item.available ? "" : " · unavailable"), item.protocol_id);
+        option.disabled = item.available !== true;
+        if (item.unavailable_reason) option.title = item.unavailable_reason;
+        select.appendChild(option);
+      });
+      var firstAvailable = protocolChoices.find(function (item) { return item.available === true; });
+      if (firstAvailable) select.value = firstAvailable.protocol_id;
+      select.disabled = !firstAvailable;
+      renderPresets(); renderOperatorFromLastState();
     }).catch(function () { $("protocol-select").innerHTML = "<option value=''>Supervisor unavailable</option>"; });
   }
   function sendControl(command) {
@@ -369,7 +429,14 @@
       pendingControlIds[command] = requestId;
     }
     var body = { command: command, request_id: requestId }, receivedResponse = false;
-    if (command === "prepare") body.protocol = $("protocol-select").value;
+    if (command === "prepare") {
+      body.protocol_id = $("protocol-select").value;
+      body.preset_id = $("preset-select").value;
+      body.fields = {};
+      Object.keys(runtimeFieldInputs).forEach(function (name) {
+        if (runtimeFieldInputs[name].value !== "") body.fields[name] = runtimeFieldInputs[name].value;
+      });
+    }
     $("control-message").textContent = "Sending " + command.replace(/_/g, " ") + "…";
     fetch("/api/control", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + operatorToken }, body: JSON.stringify(body) })
       .then(function (response) { return response.json().then(function (value) { receivedResponse = true; if (!response.ok) throw new Error(value.error || "command rejected"); return value; }); })
@@ -377,6 +444,8 @@
       .catch(function (error) { if (receivedResponse) delete pendingControlIds[command]; $("control-message").textContent = error.message; });
   }
   $("control-token").addEventListener("input", function (event) { operatorToken = event.target.value; poll(); });
+  $("protocol-select").addEventListener("change", function () { renderPresets(); renderOperatorFromLastState(); });
+  $("preset-select").addEventListener("change", renderOperatorFromLastState);
   [["prepare-button", "prepare"], ["start-button", "start"], ["stop-button", "stop"], ["abort-button", "abort"], ["bait-left-button", "bait_left"], ["bait-right-button", "bait_right"]].forEach(function (item) {
     $(item[0]).addEventListener("click", function () { sendControl(item[1]); });
   });
