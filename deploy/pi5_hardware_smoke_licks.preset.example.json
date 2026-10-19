@@ -1,0 +1,22 @@
+{
+  "preset_id": "pi5_hardware_smoke_licks",
+  "display_name": "Pi5 hardware smoke + licks",
+  "description": "Opt-in real KMS, dual-camera, left/right lick input smoke test; reward outputs remain disabled.",
+  "arguments": [
+    "natural-images",
+    "run",
+    "--config",
+    "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+    "--image-count",
+    "20",
+    "--cameras",
+    "--licks",
+    "--operator-control",
+    "--output-root",
+    "/mnt/behavbox_ssd/sessions"
+  ],
+  "config_path": "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+  "required_files": [
+    "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml"
+  ]
+}

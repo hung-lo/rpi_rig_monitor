@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 DEFAULT_IMAGE_DIR = "/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png"
+DEFAULT_NATURAL_IMAGE_DIR = "/home/pi/rpi_vstim_suite/assets/natural_images/stringer_natimg2800_center_crop"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,6 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--web-port", type=int, default=int(os.environ.get("RIG_MONITOR_WEB_PORT", "8080")))
     parser.add_argument("--stale-after-sec", type=float, default=float(os.environ.get("RIG_MONITOR_STALE_AFTER_SEC", "5.0")))
     parser.add_argument("--image-dir", default=os.environ.get("RIG_MONITOR_IMAGE_DIR", DEFAULT_IMAGE_DIR))
+    parser.add_argument("--natural-image-dir", default=os.environ.get(
+        "RIG_MONITOR_NATURAL_IMAGE_DIR", DEFAULT_NATURAL_IMAGE_DIR
+    ))
+    parser.add_argument("--session-root", default=os.environ.get(
+        "RIG_MONITOR_SESSION_ROOT", "/mnt/behavbox_ssd/sessions"
+    ))
     parser.add_argument("--supervisor-state-dir", default=os.environ.get("RIG_MONITOR_SUPERVISOR_STATE_DIR"))
     parser.add_argument("--supervisor-socket", default=os.environ.get("RIG_MONITOR_SUPERVISOR_SOCKET"))
     parser.set_defaults(control_token=os.environ.get("RIG_MONITOR_CONTROL_TOKEN"))

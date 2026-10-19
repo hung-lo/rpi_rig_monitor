@@ -129,6 +129,8 @@ class MonitorState(object):
             "block": None,
             "total_blocks": None,
             "image": None,
+            "stimulus_state": None,
+            "lick_state": None,
             "stimulus_role": None,
             "eta_sec": None,
             "last_trial": None,
@@ -165,7 +167,8 @@ class MonitorState(object):
                 self._recent.clear()
                 self._recent_events.clear()
                 for key in ("protocol", "phase", "trial", "total_trials", "block", "total_blocks",
-                            "image", "stimulus_role", "eta_sec", "last_trial", "recent_trials"):
+                            "image", "stimulus_state", "lick_state", "stimulus_role", "eta_sec",
+                            "last_trial", "recent_trials"):
                     self._data[key] = [] if key == "recent_trials" else None
                 self._data.update(copy.deepcopy(SESSION_STATE_DEFAULTS))
                 self._data.update(copy.deepcopy(SESSION_COUNTER_DEFAULTS))
@@ -219,7 +222,8 @@ class MonitorState(object):
                 self._generic["protocol"].update(copy.deepcopy(protocol_state))
             envelope = {"type", "schema_version", "telemetry_schema_version", "protocol",
                         "session_id", "session", "hardware", "integrity", "protocol_state",
-                        "protocol_data", "lifecycle", "state", "elapsed_s", "eta_s", "eta_sec"}
+                        "protocol_data", "lifecycle", "state", "elapsed_s", "eta_s", "eta_sec",
+                        "stimulus_state", "lick_state"}
             self._generic["protocol"].update({
                 key: copy.deepcopy(value) for key, value in packet.items() if key not in envelope
             })
@@ -238,6 +242,9 @@ class MonitorState(object):
                     self._data[key] = copy.deepcopy(packet[key])
             for key in SPOUT_SESSION_DEFAULTS:
                 if key in packet:
+                    self._data[key] = copy.deepcopy(packet[key])
+            for key in ("stimulus_state", "lick_state"):
+                if isinstance(packet.get(key), dict):
                     self._data[key] = copy.deepcopy(packet[key])
 
             if message_type == "trial_complete":

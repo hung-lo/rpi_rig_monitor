@@ -1,15 +1,20 @@
 import os
 import unittest
 
-from monitor.config import DEFAULT_IMAGE_DIR, parse_args
+from monitor.config import DEFAULT_IMAGE_DIR, DEFAULT_NATURAL_IMAGE_DIR, parse_args
 
 
 class ConfigTests(unittest.TestCase):
     def test_default_image_directory(self):
         self.assertEqual(parse_args([]).image_dir, DEFAULT_IMAGE_DIR)
+        self.assertEqual(parse_args([]).natural_image_dir, DEFAULT_NATURAL_IMAGE_DIR)
 
     def test_cli_image_directory_override(self):
         self.assertEqual(parse_args(["--image-dir", "/tmp/images"]).image_dir, "/tmp/images")
+        self.assertEqual(
+            parse_args(["--natural-image-dir", "/tmp/natural"]).natural_image_dir,
+            "/tmp/natural",
+        )
 
     def test_supervisor_path_overrides(self):
         args = parse_args(["--supervisor-state-dir", "/tmp/rig-state",
@@ -39,6 +44,21 @@ class ConfigTests(unittest.TestCase):
                 os.environ.pop("RIG_MONITOR_IMAGE_DIR", None)
             else:
                 os.environ["RIG_MONITOR_IMAGE_DIR"] = previous
+
+    def test_environment_natural_image_directory_override(self):
+        previous = os.environ.get("RIG_MONITOR_NATURAL_IMAGE_DIR")
+        try:
+            os.environ["RIG_MONITOR_NATURAL_IMAGE_DIR"] = "/tmp/natural-from-env"
+            self.assertEqual(parse_args([]).natural_image_dir, "/tmp/natural-from-env")
+            self.assertEqual(
+                parse_args(["--natural-image-dir", "/tmp/natural-from-cli"]).natural_image_dir,
+                "/tmp/natural-from-cli",
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("RIG_MONITOR_NATURAL_IMAGE_DIR", None)
+            else:
+                os.environ["RIG_MONITOR_NATURAL_IMAGE_DIR"] = previous
 
 
 if __name__ == "__main__":

@@ -1,7 +1,11 @@
+import hashlib
+import json
 import os
+import struct
 import tempfile
 import unittest
 from pathlib import Path
+import zlib
 
 from monitor.state import MonitorState
 from monitor.supervisor import SupervisorClient, SupervisorError
@@ -45,6 +49,33 @@ class FakeSupervisor:
                                     "control_connected": True, "recovery_state": "CONNECTED"})
             return {"ok": True, "result": {"ack": {"ok": True}, "status": self.status}}
         return {"ok": False, "error": "unknown"}
+
+
+def _png_bytes():
+    def chunk(kind, data):
+        payload = kind + data
+        return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload) & 0xffffffff)
+
+    header = struct.pack(">IIBBBBB", 90, 68, 8, 0, 0, 0, 0)
+    pixels = b"".join(b"\x00" + bytes([127]) * 90 for _ in range(68))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+
+
+def _write_selected_session(session_root, session_id, filename, image_bytes):
+    session = session_root / session_id
+    session.mkdir(parents=True)
+    digest = hashlib.sha256(image_bytes).hexdigest()
+    (session / "plan.json").write_text(json.dumps({
+        "metadata": {"selected_images": [filename]},
+    }))
+    (session / "selected_image_table.json").write_text(json.dumps({
+        "images": [{"index": 1, "image": filename, "sha256": digest}],
+    }))
+    (session / "asset_manifest.json").write_text(json.dumps({
+        "entries": [{"relative_path": filename, "sha256": digest}],
+    }))
+    return session
 
 
 class WebTests(unittest.TestCase):
@@ -144,12 +175,129 @@ class WebTests(unittest.TestCase):
         self.assertEqual(client.get("/api/state").status_code, 200)
         self.assertEqual(client.get("/stimulus-image/test.png").status_code, 404)
 
+    def test_missing_natural_assets_do_not_break_monitor(self):
+        client = create_app(
+            MonitorState(), HealthyReceiver(), natural_image_dir="/path/that/does/not/exist",
+            session_root="/path/that/does/not/exist",
+        ).test_client()
+        self.assertEqual(client.get("/").status_code, 200)
+        self.assertEqual(client.get(
+            "/api/stimulus-image/session-1/natimg_center_0001.png"
+        ).status_code, 404)
+
     def test_stimulus_image_cannot_escape_directory(self):
         with tempfile.TemporaryDirectory() as image_dir, tempfile.TemporaryDirectory() as outside_dir:
             with open(os.path.join(outside_dir, "secret.txt"), "wb") as secret:
                 secret.write(b"not for the dashboard")
             response = create_app(MonitorState(), HealthyReceiver(), image_dir=image_dir).test_client().get("/stimulus-image/../secret.txt")
             self.assertEqual(response.status_code, 404)
+
+    def test_legacy_stimulus_route_rejects_symlink_escape(self):
+        with tempfile.TemporaryDirectory() as image_dir, tempfile.TemporaryDirectory() as outside_dir:
+            secret = Path(outside_dir) / "outside.png"
+            secret.write_bytes(b"private")
+            (Path(image_dir) / "link.png").symlink_to(secret)
+            client = create_app(MonitorState(), HealthyReceiver(), image_dir=image_dir).test_client()
+            self.assertEqual(client.get("/stimulus-image/link.png").status_code, 404)
+
+    def test_selected_natural_image_requires_session_selection_and_returns_exact_png(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assets, sessions = root / "assets", root / "sessions"
+            assets.mkdir()
+            sessions.mkdir()
+            filename = "natimg_center_0007.png"
+            image_bytes = _png_bytes()
+            (assets / filename).write_bytes(image_bytes)
+            _write_selected_session(sessions, "session-7", filename, image_bytes)
+            client = create_app(MonitorState(), HealthyReceiver(), image_dir=root / "legacy",
+                                session_root=sessions, natural_image_dir=assets).test_client()
+            response = client.get(f"/api/stimulus-image/session-7/{filename}")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, "image/png")
+            self.assertEqual(response.data, image_bytes)
+            self.assertIn("max-age=86400", response.headers["Cache-Control"])
+            self.assertEqual(client.get(
+                "/api/stimulus-image/session-7/natimg_center_0008.png"
+            ).status_code, 404)
+            self.assertEqual(client.get(
+                "/api/stimulus-image/session-7/natimg_center_2800.png"
+            ).status_code, 404)
+            self.assertEqual(client.get(
+                "/api/stimulus-image/../outside/natimg_center_0007.png"
+            ).status_code, 404)
+            invalid = client.get(f"/api/stimulus-image/%2e%2e/{filename}")
+            self.assertEqual(invalid.status_code, 404)
+            self.assertEqual(invalid.data, b"")
+            self.assertNotIn(str(root).encode(), invalid.data)
+
+            session = sessions / "session-7"
+            (session / "plan.json").write_text(json.dumps({"metadata": None}))
+            malformed = client.get(f"/api/stimulus-image/session-7/{filename}")
+            self.assertEqual(malformed.status_code, 404)
+            self.assertEqual(malformed.data, b"")
+
+    def test_selected_image_endpoint_rejects_path_escape_and_bad_session_mapping(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            assets, sessions = root / "assets", root / "sessions"
+            assets.mkdir()
+            sessions.mkdir()
+            filename = "natimg_center_0007.png"
+            image_bytes = _png_bytes()
+            outside_image = Path(outside) / filename
+            outside_image.write_bytes(image_bytes)
+            (assets / filename).symlink_to(outside_image)
+            _write_selected_session(sessions, "session-7", filename, image_bytes)
+            client = create_app(MonitorState(), HealthyReceiver(), image_dir=root / "legacy",
+                                session_root=sessions, natural_image_dir=assets).test_client()
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/session-7/{filename}"
+            ).status_code, 404)
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/missing-session/{filename}"
+            ).status_code, 404)
+
+    def test_selected_image_endpoint_rejects_symlinked_session_escape_and_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            assets, sessions = root / "assets", root / "sessions"
+            assets.mkdir()
+            sessions.mkdir()
+            filename = "natimg_center_0007.png"
+            image_bytes = _png_bytes()
+            (assets / filename).write_bytes(image_bytes)
+            outside_session = _write_selected_session(Path(outside), "external", filename, image_bytes)
+            (sessions / "session-escape").symlink_to(outside_session, target_is_directory=True)
+            session = _write_selected_session(sessions, "session-7", filename, image_bytes)
+            table = json.loads((session / "selected_image_table.json").read_text())
+            table["images"][0]["sha256"] = "0" * 64
+            (session / "selected_image_table.json").write_text(json.dumps(table))
+            client = create_app(MonitorState(), HealthyReceiver(), image_dir=root / "legacy",
+                                session_root=sessions, natural_image_dir=assets).test_client()
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/session-escape/{filename}"
+            ).status_code, 404)
+            self.assertEqual(client.get(
+                f"/api/stimulus-image/session-7/{filename}"
+            ).status_code, 404)
+
+    def test_dashboard_contains_natural_image_and_independent_lick_fields(self):
+        client = create_app(MonitorState(), HealthyReceiver()).test_client()
+        dashboard = client.get("/")
+        for element_id in ("natural-stimulus-details", "stimulus-filename", "stimulus-sequence",
+                           "stimulus-freshness", "natural-lick-feedback", "lick-left-status",
+                           "lick-left-contact", "lick-left-onset", "lick-left-recent",
+                           "lick-left-total", "lick-right-status", "lick-right-contact",
+                           "lick-right-onset", "lick-right-recent", "lick-right-total"):
+            self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
+        javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
+        self.assertIn('"/api/stimulus-image/" + encodeURIComponent(sessionId)', javascript)
+        self.assertIn('data.telemetry_freshness === "FRESH"', javascript)
+        self.assertIn('clearNaturalPreview("STALE / UNKNOWN", "stale")', javascript)
+        self.assertIn('clearNaturalPreview("Session ended", "gray")', javascript)
+        self.assertIn('channel.contact_active === true', javascript)
+        self.assertIn('channel.last_lick_age_sec <= 1.5', javascript)
 
     def test_control_requires_bearer_token_and_forwards_protocol_selection(self):
         supervisor = FakeSupervisor()

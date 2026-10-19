@@ -37,6 +37,7 @@
     return formatInteger(data.training_reward_index);
   }
   var requestedImage = null;
+  var requestedNaturalImage = null;
   var SVG_NS = "http://www.w3.org/2000/svg";
   function svgElement(name, attributes, content) {
     var element = document.createElementNS(SVG_NS, name);
@@ -92,6 +93,106 @@
     image.onload = function () { if (requestedImage === filename) { image.hidden = false; message.hidden = true; empty.hidden = true; } };
     image.onerror = function () { if (requestedImage === filename) { image.hidden = true; message.hidden = false; empty.hidden = true; } };
     image.src = "/stimulus-image/" + encodeURIComponent(filename);
+  }
+  function clearNaturalPreview(message, className) {
+    var image = $("preview-image"), empty = $("stimulus-preview-empty"), preview = image.parentNode;
+    requestedNaturalImage = null;
+    image.hidden = true; image.removeAttribute("src"); $("preview-message").hidden = true;
+    empty.textContent = message; empty.hidden = false;
+    preview.classList.remove("gray", "stale");
+    if (className) preview.classList.add(className);
+  }
+  function setNaturalPreview(sessionId, filename) {
+    var identity = sessionId + "/" + filename;
+    if (identity === requestedNaturalImage) return;
+    requestedImage = null; requestedNaturalImage = identity;
+    var image = $("preview-image"), empty = $("stimulus-preview-empty"), message = $("preview-message");
+    image.hidden = true; message.hidden = true; empty.hidden = true;
+    image.onload = function () { if (requestedNaturalImage === identity) { image.hidden = false; message.hidden = true; } };
+    image.onerror = function () { if (requestedNaturalImage === identity) { image.hidden = true; message.hidden = false; } };
+    image.src = "/api/stimulus-image/" + encodeURIComponent(sessionId) + "/" + encodeURIComponent(filename);
+  }
+  function renderNaturalStimulus(data, isNatural) {
+    setHidden("natural-stimulus-details", !isNatural);
+    setHidden("natural-lick-feedback", !isNatural);
+    if (!isNatural) { requestedNaturalImage = null; return; }
+    var current = data.stimulus_state, rigSession = data.rig && data.rig.session || {};
+    var sessionState = String(rigSession.state || "").toUpperCase();
+    var terminal = ["COMPLETE", "ERROR", "ABORTED"].indexOf(sessionState) >= 0;
+    var fresh = data.telemetry_freshness === "FRESH";
+    var age = finiteNumber(data.last_packet_age_sec) ? " · " + formatSeconds(data.last_packet_age_sec) + " ago" : "";
+    $("stimulus-freshness").textContent = fresh ? "FRESH" + age : (data.telemetry_freshness === "NONE" ? "UNKNOWN · no telemetry" : "STALE / UNKNOWN");
+    if (!fresh) {
+      $("image").textContent = "—"; $("stimulus-role").textContent = "UNKNOWN";
+      $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
+      clearNaturalPreview("STALE / UNKNOWN", "stale");
+      return;
+    }
+    if (terminal) {
+      $("image").textContent = "—"; $("stimulus-role").textContent = "Session ended";
+      $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
+      clearNaturalPreview("Session ended", "gray");
+      return;
+    }
+    if (!current || typeof current !== "object") {
+      $("image").textContent = "—"; $("stimulus-role").textContent = "Unavailable";
+      $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
+      clearNaturalPreview("Image assets unavailable", "gray");
+      return;
+    }
+    var phase = text(current.phase), sequence = current.sequence_index;
+    $("stimulus-role").textContent = phase;
+    $("stimulus-sequence").textContent = sequence == null ? "—" : "Trial " + sequence;
+    if (current.stimulus_kind === "gray") {
+      $("image").textContent = "Gray";
+      $("stimulus-filename").textContent = "—";
+      clearNaturalPreview("Gray interval · " + phase, "gray");
+      return;
+    }
+    var filename = current.image_filename;
+    if (current.stimulus_kind !== "natural_image" || typeof filename !== "string" ||
+        !/^natimg_center_[0-9]{4}\.png$/.test(filename) || Number(filename.slice(14, 18)) >= 2800 ||
+        !data.session_id) {
+      $("image").textContent = "—"; $("stimulus-filename").textContent = "—";
+      clearNaturalPreview("Image preview unavailable", "gray");
+      return;
+    }
+    $("image").textContent = text(current.image_id);
+    $("stimulus-filename").textContent = filename;
+    $("preview-image").parentNode.classList.remove("gray", "stale");
+    setNaturalPreview(data.session_id, filename);
+  }
+  function renderNaturalLicks(data) {
+    var licks = data.lick_state, fresh = data.telemetry_freshness === "FRESH";
+    var sessionState = String(data.rig && data.rig.session && data.rig.session.state || "").toUpperCase();
+    var ended = ["COMPLETE", "ERROR", "ABORTED"].indexOf(sessionState) >= 0;
+    ["left", "right"].forEach(function (name) {
+      var channel = licks && licks.channels && licks.channels[name];
+      var status = channel && channel.status;
+      var available = channel && channel.available === true;
+      var label = status === "not_requested" ? "GPIO not requested" :
+        status === "not_configured" ? "Not configured" :
+        status === "session_ended" || ended ? "Session ended" :
+        available ? (fresh ? "Available" : "STALE") : "Not available";
+      $("lick-" + name + "-status").textContent = label;
+      if (!available || !fresh || ended) {
+        $("lick-" + name + "-contact").textContent = !fresh ? "Unknown (stale)" : "—";
+        $("lick-" + name + "-onset").textContent = "—";
+      } else {
+        $("lick-" + name + "-contact").textContent = channel.contact_active === true ? "Active" :
+          channel.contact_active === false ? "Inactive" : "Unknown";
+        var recent = finiteNumber(channel.last_lick_age_sec) && channel.last_lick_age_sec <= 1.5;
+        $("lick-" + name + "-onset").textContent = recent ? "LICK" : "—";
+        $("lick-" + name + "-onset").className = recent ? "onset-active" : "";
+      }
+      ["recent", "total"].forEach(function (metric) {
+        var field = metric === "recent" ? "recent_lick_count_2s" : "total_lick_onset_count_session";
+        var hasCount = channel && finiteNumber(channel[field]);
+        var value = hasCount ? formatInteger(channel[field]) : "—";
+        if (hasCount && !fresh) value += " (stale)";
+        $("lick-" + name + "-" + metric).textContent = value;
+      });
+    });
   }
   function rewardLabel(trial) {
     if (trial.reward_omission === true) return "OMITTED";
@@ -231,14 +332,17 @@
   function render(data) {
     var isSpout = data.protocol === "spout_training";
     var isNewProtocol = data.protocol === "exposure_reward_partial_reversal_v1" || data.protocol_version === "exposure_reward_partial_reversal_v1" || data.new_reward_protocol_behavior_available === true;
+    var isNatural = data.protocol === "natural-images" || data.protocol === "natural_images";
     var isBaitPhase = data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY";
     var isBaitView = isSpout && (isBaitPhase || (!data.phase && data.manual_bait_active === true));
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("contingency-phase").textContent = text(data.contingency_phase);
+    renderNaturalStimulus(data, isNatural);
+    if (isNatural) renderNaturalLicks(data);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
     setHidden("reward-conditioning-last-view", isSpout); setHidden("spout-last-view", !isSpout);
-    setHidden("legacy-behavior-view", isSpout || isNewProtocol); setHidden("partial-reversal-behavior-view", isSpout || !isNewProtocol);
+    setHidden("legacy-behavior-view", isSpout || isNewProtocol || isNatural); setHidden("partial-reversal-behavior-view", isSpout || isNatural || !isNewProtocol);
     if (isSpout) {
       setHidden("spout-behavior-scheduled", isBaitView);
       setHidden("spout-behavior-manual", !isBaitView);
@@ -248,6 +352,13 @@
     if (isSpout) {
       $("image").textContent = "—"; $("stimulus-role").textContent = "—"; setPreview(null);
       renderSpoutBehavior(data, isBaitView); renderSpoutLast(data, isBaitView);
+    } else if (isNatural) {
+      var stimulus = data.stimulus_state || {};
+      $("phase").textContent = text(stimulus.phase);
+      $("trial").textContent = stimulus.sequence_index == null ? "—" : text(stimulus.sequence_index);
+      $("block").textContent = "—"; $("eta").textContent = formatEta(data.eta_sec);
+      $("phase-contingency").textContent = "—";
+      renderLickTimeline(null);
     } else {
       $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role); setPreview(data.image);
       $("phase").textContent = text(data.phase); $("trial").textContent = data.trial == null ? "—" : text(data.trial) + (data.total_trials == null ? "" : " / " + data.total_trials);

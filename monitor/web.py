@@ -1,17 +1,25 @@
 """Flask dashboard application."""
 
 import hmac
+import hashlib
+import json
 import os
+import re
+from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_file
 
 from .registry import PROTOCOL_ID_RE
 from .state import MonitorState
 from .supervisor import SupervisorError
 
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_IMAGE_NAME_RE = re.compile(r"^natimg_center_\d{4}\.png$")
+_MAX_SESSION_INDEX_BYTES = 4_000_000
+_MAX_NATURAL_IMAGE_BYTES = 1_000_000
 
 def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=None,
-               control_token=None) -> Flask:
+               control_token=None, session_root=None, natural_image_dir=None) -> Flask:
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     control_token = control_token or os.environ.get("RIG_MONITOR_CONTROL_TOKEN")
 
@@ -111,7 +119,73 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
     def stimulus_image(filename):
         if not image_dir or not os.path.isdir(image_dir):
             return "", 404
-        return send_from_directory(image_dir, filename)
+        try:
+            root = Path(image_dir).resolve(strict=True)
+            path = (root / filename).resolve(strict=True)
+            path.relative_to(root)
+            if not path.is_file():
+                return "", 404
+        except (OSError, ValueError):
+            return "", 404
+        return send_file(path)
+
+    @app.route("/api/stimulus-image/<session_id>/<filename>")
+    def selected_stimulus_image(session_id, filename):
+        if (not _SESSION_ID_RE.fullmatch(session_id) or session_id in {".", ".."}
+                or not _IMAGE_NAME_RE.fullmatch(filename)
+                or int(filename[14:18]) >= 2800 or not natural_image_dir
+                or not session_root):
+            return "", 404
+        try:
+            sessions = Path(session_root).resolve(strict=True)
+            assets = Path(natural_image_dir).resolve(strict=True)
+            session = (sessions / session_id).resolve(strict=True)
+            session.relative_to(sessions)
+            table_path = (session / "selected_image_table.json").resolve(strict=True)
+            table_path.relative_to(session)
+            plan_path = (session / "plan.json").resolve(strict=True)
+            plan_path.relative_to(session)
+            manifest_path = (session / "asset_manifest.json").resolve(strict=True)
+            manifest_path.relative_to(session)
+            if any(not path.is_file() or path.stat().st_size > _MAX_SESSION_INDEX_BYTES
+                   for path in (table_path, plan_path, manifest_path)):
+                return "", 404
+            table = json.loads(table_path.read_text(encoding="utf-8"))
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not all(isinstance(value, dict) for value in (table, plan, manifest)):
+                return "", 404
+            rows = table.get("images") if isinstance(table, dict) else None
+            row = next((item for item in rows if isinstance(item, dict)
+                        and item.get("image") == filename), None) if isinstance(rows, list) else None
+            expected_hash = row.get("sha256") if row else None
+            if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+                return "", 404
+            metadata = plan.get("metadata")
+            selected = metadata.get("selected_images") if isinstance(metadata, dict) else None
+            entries = manifest.get("entries") if isinstance(manifest, dict) else None
+            if (not isinstance(selected, list) or filename not in selected or
+                    not isinstance(entries, list) or not any(
+                        isinstance(item, dict) and item.get("relative_path") == filename
+                        and item.get("sha256") == expected_hash for item in entries
+                    )):
+                return "", 404
+            image_path = (assets / filename).resolve(strict=True)
+            image_path.relative_to(assets)
+            if not image_path.is_file() or image_path.stat().st_size > _MAX_NATURAL_IMAGE_BYTES:
+                return "", 404
+            image_bytes = image_path.read_bytes()
+            if (len(image_bytes) > _MAX_NATURAL_IMAGE_BYTES
+                    or hashlib.sha256(image_bytes).hexdigest() != expected_hash):
+                return "", 404
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return "", 404
+        response = send_file(
+            image_path, mimetype="image/png", conditional=True, max_age=86400,
+            download_name=filename,
+        )
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
 
     return app
 

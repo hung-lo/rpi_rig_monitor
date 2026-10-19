@@ -61,9 +61,21 @@
     <section class="grid top-row">
       <article class="card stimulus-card">
         <p class="eyebrow">CURRENT STIMULUS</p>
-        <div class="preview"><img id="preview-image" alt="Current stimulus preview" hidden><span id="stimulus-preview-empty" class="stimulus-preview-empty">No active stimulus</span><span id="preview-message" hidden>Stimulus image unavailable</span></div>
+        <div class="preview"><img id="preview-image" alt="Current natural image source preview" hidden><span id="stimulus-preview-empty" class="stimulus-preview-empty">No active stimulus</span><span id="preview-message" hidden>Stimulus image unavailable</span></div>
         <div class="filename" id="image">—</div>
         <div class="role" id="stimulus-role">—</div>
+        <div id="natural-stimulus-details" class="natural-stimulus-details" hidden>
+          <div class="metric-row"><span>Source filename</span><strong id="stimulus-filename">—</strong></div>
+          <div class="metric-row"><span>Trial / sequence</span><strong id="stimulus-sequence">—</strong></div>
+          <div class="metric-row"><span>Telemetry</span><strong id="stimulus-freshness">—</strong></div>
+        </div>
+        <div id="natural-lick-feedback" class="natural-lick-feedback" hidden>
+          <p class="eyebrow">LIVE LICKS · OBSERVATIONAL</p>
+          <div class="lick-channels">
+            <div class="lick-channel"><strong>LEFT</strong><span id="lick-left-status">Not available</span><span>Contact: <b id="lick-left-contact">—</b></span><span>Recent onset: <b id="lick-left-onset">—</b></span><span>Licks last 2 s: <b id="lick-left-recent">—</b></span><span>Total: <b id="lick-left-total">—</b></span></div>
+            <div class="lick-channel"><strong>RIGHT</strong><span id="lick-right-status">Not available</span><span>Contact: <b id="lick-right-contact">—</b></span><span>Recent onset: <b id="lick-right-onset">—</b></span><span>Licks last 2 s: <b id="lick-right-recent">—</b></span><span>Total: <b id="lick-right-total">—</b></span></div>
+          </div>
+        </div>
       </article>
       <article class="card session-card">
         <p class="eyebrow" id="session-title">SESSION</p>

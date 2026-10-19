@@ -21,6 +21,48 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(snapshot["image"], "cue.png")
         self.assertTrue(snapshot["connected"])
 
+    def test_natural_image_and_per_channel_lick_snapshots_preserve_legacy_counts(self):
+        state = MonitorState()
+        packet = {
+            "type": "state", "protocol": "natural-images", "session_id": "ni-1",
+            "lifecycle": "RUNNING",
+            "stimulus_state": {
+                "phase": "TASK", "stimulus_kind": "natural_image", "image_id": "natimg_center_0007",
+                "image_index": 7, "image_filename": "natimg_center_0007.png", "sequence_index": 3,
+            },
+            "lick_state": {
+                "requested": True, "licking_active": True, "last_lick_age_sec": 0.1,
+                "recent_lick_count_2s": 2, "total_lick_onset_count_session": 9,
+                "channels": {
+                    "left": {"available": True, "status": "available", "contact_active": True,
+                             "last_lick_age_sec": 0.1, "recent_lick_count_2s": 2,
+                             "total_lick_onset_count_session": 8},
+                    "right": {"available": True, "status": "available", "contact_active": False,
+                              "last_lick_age_sec": 3.0, "recent_lick_count_2s": 0,
+                              "total_lick_onset_count_session": 1},
+                    "center": {"available": False, "status": "not_configured"},
+                },
+            },
+            "licking_active": True, "last_lick_age_sec": 0.1,
+            "recent_lick_count_2s": 2, "total_lick_onset_count_session": 9,
+        }
+        state.update(packet, received_at=10.0)
+        snapshot = state.snapshot(now=10.1)
+        self.assertEqual(snapshot["stimulus_state"]["image_filename"], "natimg_center_0007.png")
+        self.assertEqual(snapshot["stimulus_state"]["sequence_index"], 3)
+        self.assertTrue(snapshot["lick_state"]["channels"]["left"]["contact_active"])
+        self.assertFalse(snapshot["lick_state"]["channels"]["right"]["contact_active"])
+        self.assertEqual(snapshot["recent_lick_count_2s"], 2)
+        self.assertEqual(snapshot["total_lick_onset_count_session"], 9)
+
+        state.update({"type": "state", "protocol": "natural-images", "session_id": "ni-2"},
+                     received_at=11.0)
+        reset = state.snapshot(now=11.0)
+        self.assertIsNone(reset["stimulus_state"])
+        self.assertIsNone(reset["lick_state"])
+        self.assertEqual(reset["recent_lick_count_2s"], 0)
+        self.assertEqual(reset["total_lick_onset_count_session"], 0)
+
     def test_trial_history_is_bounded_and_preserved(self):
         state = MonitorState(history_limit=3)
         for trial in range(5):
