@@ -53,10 +53,13 @@ class SupervisorTests(unittest.TestCase):
         finally:
             self.temporary.cleanup()
 
-    def _start_supervisor(self):
+    def _start_supervisor(self, registry_file=None):
         command = [sys.executable, "-m", "monitor.supervisor", "--state-dir", str(self.state_dir),
                    "--socket-path", str(self.socket_path), "--telemetry-port", "0"]
         environment = os.environ.copy()
+        environment.pop("RIG_MONITOR_PROTOCOL_REGISTRY", None)
+        if registry_file is not None:
+            environment["RIG_MONITOR_PROTOCOL_REGISTRY"] = str(registry_file)
         environment["RIG_MONITOR_CONTROL_TOKEN"] = "supervisor-only-test-secret"
         self.daemon = subprocess.Popen(command, cwd=str(ROOT), stdin=subprocess.DEVNULL,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -73,10 +76,10 @@ class SupervisorTests(unittest.TestCase):
                 time.sleep(0.05)
         self.fail("supervisor did not start")
 
-    def _restart_supervisor(self):
+    def _restart_supervisor(self, registry_file=None):
         self.daemon.terminate()
         self.daemon.wait(timeout=3)
-        self._start_supervisor()
+        self._start_supervisor(registry_file=registry_file)
 
     def _terminate_recorded_task(self):
         try:
@@ -89,14 +92,15 @@ class SupervisorTests(unittest.TestCase):
         except (OSError, ValueError, TypeError):
             pass
 
-    def _response(self, action, protocol=None, request_id=None):
+    def _response(self, action, protocol=None, request_id=None, preset_id="standard", fields=None):
         request = {"command": "control", "action": action, "request_id": request_id or uuid.uuid4().hex}
-        if protocol is not None:
-            request["protocol"] = protocol
+        if action == "prepare":
+            request.update({"protocol_id": protocol or "fake", "preset_id": preset_id,
+                            "fields": fields or {"subject_id": "example_mouse"}})
         return self.client.request(request)
 
-    def _control(self, action, protocol=None):
-        response = self._response(action, protocol)
+    def _control(self, action, protocol=None, preset_id="standard", fields=None):
+        response = self._response(action, protocol, preset_id=preset_id, fields=fields)
         self.assertTrue(response.get("ok"), response.get("error"))
         return response.get("result")
 
@@ -117,6 +121,11 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(self._response("python -c 'import os'")["ok"])
         prepared = self._control("prepare", "fake")
         self.assertEqual(prepared["state"], "READY")
+        self.assertEqual(prepared["protocol_id"], "fake")
+        self.assertEqual(prepared["preset_id"], "standard")
+        self.assertEqual(prepared["subject_id"], "example_mouse")
+        self.assertEqual(prepared["adapter_type"], "unix_json_v1")
+        self.assertEqual(prepared["launch_metadata"]["runtime_fields"], {"subject_id": "example_mouse"})
         self.assertEqual(prepared["supervisor_schema_version"], 1)
         self.assertEqual(prepared["process_starttime"], _process_identity(prepared["pid"])["process_starttime"])
         self.assertEqual(prepared["process_group_id"], prepared["pid"])
@@ -287,6 +296,176 @@ class SupervisorTests(unittest.TestCase):
         while time.monotonic() < deadline and server.snapshot()["process_running"]:
             time.sleep(0.05)
         self.assertFalse(server.snapshot()["process_running"])
+
+    def test_external_task_process_is_adopted_after_registry_changes(self):
+        task_source = '''
+import argparse, json, socket, time
+parser = argparse.ArgumentParser()
+parser.add_argument("--profile", required=True)
+parser.add_argument("--subject-id", required=True)
+parser.add_argument("--control-socket", required=True)
+parser.add_argument("--session-id", required=True)
+parser.add_argument("--telemetry-port", type=int, required=True)
+args = parser.parse_args()
+state = "READY"
+started = None
+finish_at = None
+cache = {}
+def status():
+    elapsed = max(0.0, time.monotonic() - started) if started is not None else 0.0
+    return {"session_id": args.session_id, "protocol": "external-native", "state": state,
+            "elapsed_s": elapsed, "eta_s": None,
+            "exit_status": 0 if state in ("COMPLETE", "ABORTED") else None,
+            "capabilities": {"start": state == "READY", "stop": state == "RUNNING",
+                             "abort": state in ("PREPARING", "READY", "RUNNING")}}
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(args.control_socket)
+server.listen(4)
+server.settimeout(0.05)
+print("external fixture ready subject=" + args.subject_id, flush=True)
+try:
+    done = False
+    while not done:
+        if state == "FINISHING" and time.monotonic() >= finish_at:
+            state = "COMPLETE"
+        try:
+            client, _ = server.accept()
+        except socket.timeout:
+            continue
+        with client:
+            request = json.loads(client.makefile("rb").readline())
+            command, request_id = request.get("command"), request.get("request_id")
+            signature = json.dumps(request, sort_keys=True)
+            if command != "status" and request_id in cache:
+                cached_signature, cached_response = cache[request_id]
+                response = cached_response if cached_signature == signature else {"ok": False, "error": "request ID conflict"}
+            elif command == "status":
+                response = {"ok": True, "status": status()}
+            else:
+                error = None
+                if command == "start" and state == "READY":
+                    state, started = "RUNNING", time.monotonic()
+                elif command == "stop" and state == "RUNNING":
+                    state, finish_at = "FINISHING", time.monotonic() + 0.1
+                elif command == "abort" and state in ("PREPARING", "READY", "RUNNING"):
+                    state = "ABORTED"
+                elif command == "shutdown" and state in ("COMPLETE", "ERROR", "ABORTED"):
+                    done = True
+                else:
+                    error = "command unavailable"
+                if error:
+                    response = {"ok": False, "error": error}
+                else:
+                    response = {"schema_version": 1, "request_id": request_id, "ok": True,
+                                "state": state, "status": status()}
+                if command != "status" and request_id:
+                    cache[request_id] = (signature, response)
+            client.sendall(json.dumps(response).encode() + b"\\n")
+finally:
+    server.close()
+'''
+        script = self.state_dir / "external_task.py"
+        config = self.state_dir / "preset.toml"
+        registry_file = self.state_dir / "protocols.json"
+        script.write_text(task_source)
+        config.write_text("profile = 'short'\n")
+        definition = {
+            "protocol_id": "external_fixture", "display_name": "External fixture",
+            "description": "Separate process, not imported by monitor",
+            "adapter_type": "unix_json_v1", "engine_protocol_id": "external-native",
+            "executable": [sys.executable, str(script)],
+            "working_directory": str(self.state_dir),
+            "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
+                                "required": True, "type": "subject_id", "cli_flag": "--subject-id"}],
+            "presets": [{"preset_id": "short_validation", "display_name": "Short validation",
+                         "description": "Test fixture preset", "arguments": ["--profile", "short"],
+                         "required_files": [str(config)]}],
+        }
+        registry_file.write_text(json.dumps({"schema_version": 1, "protocols": [definition]}))
+        self._restart_supervisor(registry_file=registry_file)
+
+        ready = self._control("prepare", "external_fixture", preset_id="short_validation",
+                              fields={"subject_id": "Fucci-Tri_7"})
+        self.assertEqual(ready["state"], "READY")
+        self.assertEqual(ready["protocol_id"], "external_fixture")
+        self.assertEqual(ready["engine_protocol_id"], "external-native")
+        self.assertEqual(ready["preset_id"], "short_validation")
+        self.assertEqual(ready["subject_id"], "Fucci-Tri_7")
+        self.assertEqual(ready["adapter_type"], "unix_json_v1")
+        self.assertEqual(ready["command"][0], str(Path(sys.executable).resolve()))
+        self.assertIn("--profile", ready["command"])
+        self.assertIn("short", ready["command"])
+        self.assertIn("--subject-id", ready["command"])
+        self.assertIn("Fucci-Tri_7", ready["command"])
+        self.assertEqual(ready["launch_metadata"]["runtime_fields"], {"subject_id": "Fucci-Tri_7"})
+        script_pid = ready["pid"]
+        self._control("start")
+        self.assertEqual(self._wait_for("RUNNING")["pid"], script_pid)
+
+        # Remove the running protocol from the new registry; adoption uses saved launch identity.
+        registry_file.write_text(json.dumps({"schema_version": 1, "protocols": []}))
+        self._restart_supervisor(registry_file=registry_file)
+        adopted = self._status()
+        self.assertEqual(adopted["state"], "RUNNING")
+        self.assertEqual(adopted["recovery_state"], "ADOPTED")
+        self.assertEqual(adopted["pid"], script_pid)
+        self.assertEqual(adopted["protocol_id"], "external_fixture")
+        self.assertEqual(adopted["preset_id"], "short_validation")
+        self.assertEqual(adopted["command"], ready["command"])
+        app = create_app(MonitorState(), supervisor=self.client)
+        client = app.test_client()
+        app_status = client.get("/api/state").get_json()
+        self.assertEqual(app_status["supervisor"]["protocol_id"], "external_fixture")
+        self.assertEqual(app_status["supervisor"]["preset_id"], "short_validation")
+        self.assertEqual([item["protocol_id"] for item in client.get("/api/protocols").get_json()], ["fake"])
+        self.assertFalse(self._response("prepare", "fake")["ok"], "active task blocks a second protocol launch")
+        self._control("stop")
+        complete = self._wait_for("COMPLETE")
+        self.assertEqual(complete["exit_status"], 0)
+        self.assertTrue(Path(complete["stdout_path"]).is_file())
+        self.assertIn("external fixture ready subject=Fucci-Tri_7", Path(complete["stdout_path"]).read_text())
+
+    def test_unavailable_external_protocol_is_listed_but_cannot_launch(self):
+        missing_executable = str(self.state_dir / "not-installed-task")
+        missing_config = str(self.state_dir / "missing.toml")
+        registry_file = self.state_dir / "optional-protocols.json"
+        registry_file.write_text(json.dumps({"schema_version": 1, "protocols": [{
+            "protocol_id": "optional_external", "display_name": "Optional external task",
+            "description": "Configured separately", "adapter_type": "unix_json_v1",
+            "executable": [missing_executable],
+            "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
+                                "required": False, "type": "subject_id"}],
+            "presets": [{"preset_id": "standard", "display_name": "Standard",
+                         "required_files": [missing_config]}],
+        }]}))
+        self._restart_supervisor(registry_file=registry_file)
+        app = create_app(MonitorState(), supervisor=self.client, control_token="test-token")
+        client = app.test_client()
+        protocols = client.get("/api/protocols").get_json()
+        optional = next(item for item in protocols if item["protocol_id"] == "optional_external")
+        self.assertFalse(optional["available"])
+        self.assertFalse(optional["presets"][0]["available"])
+        self.assertIn("not installed", optional["unavailable_reason"].lower())
+        public_json = json.dumps(optional)
+        self.assertNotIn(missing_executable, public_json)
+        self.assertNotIn(missing_config, public_json)
+
+        headers = {"Authorization": "Bearer test-token"}
+        body = {"command": "prepare", "protocol_id": "optional_external", "preset_id": "standard",
+                "fields": {}, "request_id": "unavailable-launch"}
+        self.assertEqual(client.post("/api/control", json=body, headers=headers).status_code, 409)
+        unknown = dict(body, protocol_id="not_registered", request_id="unknown-launch")
+        self.assertEqual(client.post("/api/control", json=unknown, headers=headers).status_code, 409)
+        self.assertEqual(client.post("/api/control", json=dict(body, protocol_id="../../bin/bash"),
+                                     headers=headers).status_code, 400)
+        unsupported_fields = dict(body, request_id="unsupported-fields",
+                                  fields={"subject_id": "example_mouse", "config": "/etc/passwd"})
+        self.assertEqual(client.post("/api/control", json=unsupported_fields, headers=headers).status_code, 409)
+        invalid_subject = dict(body, request_id="invalid-subject",
+                               fields={"subject_id": "../example_mouse"})
+        self.assertEqual(client.post("/api/control", json=invalid_subject, headers=headers).status_code, 409)
+        self.assertEqual(self._status()["state"], "IDLE")
+        self.assertFalse(self._status()["process_running"])
 
 
 if __name__ == "__main__":

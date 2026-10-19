@@ -14,6 +14,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--control-socket", required=True)
     parser.add_argument("--session-id", required=True)
+    parser.add_argument("--subject-id", default="unspecified")
     parser.add_argument("--duration", type=float, default=30.0)
     parser.add_argument("--telemetry-port", type=int, default=5055)
     args = parser.parse_args(argv)
@@ -35,7 +36,7 @@ def main(argv=None):
         os.chmod(args.control_socket, 0o600)
         server.listen(4)
         server.settimeout(0.1)
-        print(f"fake task preparing session {args.session_id}", flush=True)
+        print(f"fake task preparing session {args.session_id} subject={args.subject_id}", flush=True)
         while True:
             now = time.monotonic()
             if state["state"] == "PREPARING" and now >= ready_at:
@@ -69,7 +70,7 @@ def main(argv=None):
                 server.settimeout(0.25)
             try:
                 connection, _ = server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 if state["state"] in TERMINAL and now - terminal_at >= 5.0:
                     break
                 continue

@@ -7,23 +7,16 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
+from .registry import RegistryError, default_registry
+
 ACTIVE_STATES = ("PREPARING", "READY", "RUNNING", "FINISHING")
 TERMINAL_STATES = ("COMPLETE", "ERROR", "ABORTED")
 CONTROL_ACTIONS = ("start", "stop", "abort", "bait_left", "bait_right")
-PROTOCOLS = {
-    "fake": {
-        "display_name": "Fake task (hardware-free)",
-        "config_path": None,
-        "argv": ["-m", "monitor.fake_task"],
-        "arguments": ["--duration", "30"],
-    },
-}
 SUPERVISOR_SCHEMA_VERSION = 1
 
 
@@ -38,7 +31,11 @@ def default_state_dir():
 def _new_record():
     return {
         "supervisor_schema_version": SUPERVISOR_SCHEMA_VERSION,
-        "session_id": None, "protocol": None, "state": "IDLE", "elapsed_s": None,
+        "session_id": None, "protocol": None, "protocol_id": None, "preset_id": None,
+        "engine_protocol_id": None,
+        "protocol_display_name": None, "preset_display_name": None, "adapter_type": None,
+        "subject_id": None, "working_directory": None, "launch_metadata": {},
+        "state": "IDLE", "elapsed_s": None,
         "eta_s": None, "pid": None, "command": None, "config_path": None,
         "started_at": None, "started_at_utc": None, "started_monotonic": None,
         "process_starttime": None, "process_boot_id": None,
@@ -105,10 +102,11 @@ class SupervisorClient:
 
 
 class SupervisorServer:
-    def __init__(self, state_dir, socket_path, telemetry_port=5055):
+    def __init__(self, state_dir, socket_path, telemetry_port=5055, registry=None):
         self.state_dir = Path(state_dir).resolve()
         self.socket_path = Path(socket_path).resolve()
         self.telemetry_port = telemetry_port
+        self.registry = registry or default_registry()
         self.state_file = self.state_dir / "supervisor-state.json"
         self.lock_file = self.state_dir / "supervisor.lock"
         self.log_dir = self.state_dir / "logs"
@@ -133,6 +131,12 @@ class SupervisorServer:
                 if not isinstance(record.get(key), list):
                     record[key] = []
             record["supervisor_schema_version"] = SUPERVISOR_SCHEMA_VERSION
+            if record.get("protocol_id") is None:
+                record["protocol_id"] = record.get("protocol")
+            if record.get("protocol") is None:
+                record["protocol"] = record.get("protocol_id")
+            if record.get("engine_protocol_id") is None:
+                record["engine_protocol_id"] = record.get("protocol_id")
             return record
         except (OSError, ValueError, TypeError):
             return _new_record()
@@ -209,7 +213,7 @@ class SupervisorServer:
             response = self._task_request({"command": "status"})
             status = response.get("status", {})
             if (not isinstance(status, dict) or status.get("session_id") != self.record["session_id"] or
-                    status.get("protocol") != self.record["protocol"] or
+                    status.get("protocol") != (self.record.get("engine_protocol_id") or self.record["protocol"]) or
                     status.get("state") not in ACTIVE_STATES + TERMINAL_STATES + ("IDLE",)):
                 self.record["control_connected"] = False
                 self.record["recovery_state"] = "CONTROL_MISMATCH"
@@ -270,35 +274,52 @@ class SupervisorServer:
         result["session_history"] = list(self.record.get("session_history", []))
         return result
 
-    def prepare(self, protocol, request_id=None):
-        if protocol not in PROTOCOLS:
-            raise SupervisorError("unsupported protocol")
+    def prepare(self, protocol_id, request_id=None, preset_id="standard", runtime_fields=None):
+        if runtime_fields is None:
+            runtime_fields = {}
+        if not isinstance(runtime_fields, dict):
+            raise SupervisorError("runtime fields must be an object")
         self._refresh()
         if self.record["state"] in ACTIVE_STATES or self.record.get("process_running"):
-            if self.record.get("prepare_request_id") == request_id and self.record.get("protocol") == protocol:
+            if (self.record.get("prepare_request_id") == request_id
+                    and self.record.get("protocol_id") == protocol_id
+                    and self.record.get("preset_id") == preset_id
+                    and self.record.get("launch_metadata", {}).get("runtime_fields", {}) == (runtime_fields or {})):
                 return self.snapshot()
             raise SupervisorError("an experiment session is already active")
         control_acks = self.record.get("control_acks", {})
-        session_id = "fake-" + uuid.uuid4().hex[:12]
+        session_id = "session-" + uuid.uuid4().hex[:16]
         endpoint = str(self.state_dir / (session_id + ".sock"))
         stdout_path = self.log_dir / (session_id + ".stdout.log")
         stderr_path = self.log_dir / (session_id + ".stderr.log")
-        descriptor = PROTOCOLS[protocol]
-        command = ([sys.executable] + list(descriptor["argv"]) + list(descriptor["arguments"]) +
-                   ["--control-socket", endpoint, "--session-id", session_id,
-                    "--telemetry-port", str(self.telemetry_port)])
+        try:
+            launch = self.registry.resolve(protocol_id, preset_id, session_id, endpoint,
+                                           self.telemetry_port, runtime_fields or {})
+        except RegistryError as exc:
+            raise SupervisorError(str(exc))
+        command = list(launch.argv)
         self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         history = list(self.record.get("session_history", []))
         if self.record.get("session_id"):
             history.insert(0, {key: self.record.get(key) for key in (
-                "session_id", "protocol", "state", "pid", "process_starttime", "process_boot_id",
+                "session_id", "protocol", "protocol_id", "preset_id", "protocol_display_name",
+                "engine_protocol_id", "preset_display_name", "adapter_type", "subject_id",
+                "working_directory", "launch_metadata",
+                "state", "pid", "process_starttime", "process_boot_id",
                 "process_group_id", "process_session_id", "command", "config_path", "started_at_utc",
                 "exit_status", "stdout_path", "stderr_path")})
         self.record = _new_record()
         self.record["session_history"] = history[:20]
         self.record["control_acks"] = control_acks
-        self.record.update({"session_id": session_id, "protocol": protocol, "state": "PREPARING",
-                            "pid": None, "command": command, "config_path": PROTOCOLS[protocol]["config_path"],
+        self.record.update({"session_id": session_id, "protocol": protocol_id, "protocol_id": protocol_id,
+                            "preset_id": preset_id, "engine_protocol_id": launch.engine_protocol_id,
+                            "protocol_display_name": launch.protocol_display_name,
+                            "preset_display_name": launch.preset_display_name, "adapter_type": launch.adapter_type,
+                            "subject_id": launch.runtime_fields.get("subject_id"),
+                            "working_directory": launch.cwd or str(Path(__file__).resolve().parents[1]),
+                            "launch_metadata": {"runtime_fields": dict(launch.runtime_fields),
+                                                "working_directory": launch.cwd},
+                            "state": "PREPARING", "pid": None, "command": command, "config_path": None,
                             "started_at": time.time(),
                             "started_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             "started_monotonic": time.monotonic(), "control_endpoint": endpoint,
@@ -309,7 +330,8 @@ class SupervisorServer:
             with open(str(stdout_path), "ab") as stdout, open(str(stderr_path), "ab") as stderr:
                 environment = os.environ.copy()
                 environment.pop("RIG_MONITOR_CONTROL_TOKEN", None)
-                self.process = subprocess.Popen(command, cwd=str(Path(__file__).resolve().parents[1]),
+                environment.update(launch.env)
+                self.process = subprocess.Popen(command, cwd=launch.cwd or str(Path(__file__).resolve().parents[1]),
                                                 stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                                                 close_fds=True, start_new_session=True, shell=False,
                                                 env=environment)
@@ -340,7 +362,8 @@ class SupervisorServer:
             try:
                 status = self._task_request({"command": "status"}).get("status", {})
                 if (not isinstance(status, dict) or status.get("session_id") != session_id or
-                        status.get("protocol") != protocol or status.get("state") not in ACTIVE_STATES + TERMINAL_STATES + ("IDLE",)):
+                        status.get("protocol") != launch.engine_protocol_id or
+                        status.get("state") not in ACTIVE_STATES + TERMINAL_STATES + ("IDLE",)):
                     raise SupervisorError("experiment control endpoint identity mismatch")
                 self.record["state"] = status.get("state", "PREPARING")
                 capabilities = status.get("capabilities", {})
@@ -360,11 +383,16 @@ class SupervisorServer:
         self._save()
         raise SupervisorError("experiment did not become READY")
 
-    def control(self, command, protocol=None, request_id=None):
+    def control(self, command, protocol_id=None, request_id=None, preset_id="standard", runtime_fields=None):
         if command not in CONTROL_ACTIONS + ("prepare",):
             raise SupervisorError("unsupported control action")
         request_id = request_id or str(uuid.uuid4())
-        signature = [command, protocol]
+        if runtime_fields is None:
+            runtime_fields = {}
+        if not isinstance(runtime_fields, dict):
+            raise SupervisorError("runtime fields must be an object")
+        signature = [command, protocol_id, preset_id if command == "prepare" else None,
+                     runtime_fields if command == "prepare" else {}]
         cached = self.record.get("control_acks", {}).get(request_id)
         if cached:
             if cached.get("signature") != signature:
@@ -375,7 +403,7 @@ class SupervisorServer:
                 return self.snapshot()
             return {"ack": cached["ack"], "status": self.snapshot()}
         if command == "prepare":
-            result = self.prepare(protocol or "fake", request_id)
+            result = self.prepare(protocol_id, request_id, preset_id, runtime_fields)
             self._remember_ack(request_id, signature, result=True)
             return result
         self._refresh()
@@ -418,17 +446,24 @@ class SupervisorServer:
         if command == "status":
             return {"ok": True, "status": self.snapshot()}
         if command == "protocols":
-            return {"ok": True, "protocols": [
-                {"id": key, "display_name": value["display_name"], "available": True}
-                for key, value in sorted(PROTOCOLS.items())]}
+            return {"ok": True, "protocols": self.registry.public_metadata()}
         if command == "control":
+            action = request.get("action")
+            expected = {"command", "action", "request_id"}
+            if action == "prepare":
+                expected.update(("protocol_id", "preset_id", "fields"))
+            if set(request) != expected:
+                return {"ok": False, "error": "invalid control request", "status": self.snapshot()}
             try:
-                return {"ok": True, "result": self.control(request.get("action"), request.get("protocol"),
-                                                              request.get("request_id"))}
+                return {"ok": True, "result": self.control(
+                    action, request.get("protocol_id"), request.get("request_id"),
+                    request.get("preset_id", "standard"), request.get("fields", {}))}
             except SupervisorError as exc:
                 request_id = request.get("request_id")
                 if isinstance(request_id, str) and request_id and request_id not in self.record.get("control_acks", {}):
-                    self._remember_ack(request_id, [request.get("action"), request.get("protocol")],
+                    self._remember_ack(request_id, [action, request.get("protocol_id"),
+                                                     request.get("preset_id") if action == "prepare" else None,
+                                                     request.get("fields", {}) if action == "prepare" else {}],
                                        error=str(exc))
                 return {"ok": False, "error": str(exc), "status": self.snapshot()}
         if command == "shutdown-supervisor":
@@ -461,7 +496,7 @@ class SupervisorServer:
                         self._refresh()
                         try:
                             connection, _ = server.accept()
-                        except socket.timeout:
+                        except TimeoutError:
                             continue
                         with connection:
                             connection.settimeout(3.0)
@@ -503,9 +538,12 @@ def main(argv=None):
     parser.add_argument("--state-dir", type=Path, default=default_state_dir())
     parser.add_argument("--socket-path", type=Path)
     parser.add_argument("--telemetry-port", type=int, default=5055)
+    parser.add_argument("--protocol-registry", type=Path,
+                        default=os.environ.get("RIG_MONITOR_PROTOCOL_REGISTRY"))
     args = parser.parse_args(argv)
     socket_path = args.socket_path or args.state_dir / "supervisor.sock"
-    return SupervisorServer(args.state_dir, socket_path, args.telemetry_port).serve_forever()
+    return SupervisorServer(args.state_dir, socket_path, args.telemetry_port,
+                            registry=default_registry(args.protocol_registry)).serve_forever()
 
 
 if __name__ == "__main__":
