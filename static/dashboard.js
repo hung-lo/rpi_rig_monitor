@@ -286,7 +286,8 @@
     var rig = data.rig || {}, session = rig.session || {}, supervisor = data.supervisor || {};
     var observedActive = ["PREPARING", "READY", "RUNNING", "FINISHING"].indexOf(session.state) >= 0 && session.id;
     var managed = supervisor.available && supervisor.session_id && (!observedActive || session.id === supervisor.session_id);
-    var state = managed ? supervisor.state : (observedActive ? session.state + " · UNMANAGED" : (session.state || "IDLE"));
+    var state = managed ? supervisor.state : (observedActive ? session.state + " · UNMANAGED" :
+      (!supervisor.available ? "UNKNOWN · SUPERVISOR OFFLINE" : (session.state || "IDLE")));
     var sessionId = managed ? supervisor.session_id : session.id;
     var protocol = managed ? supervisor.protocol : session.protocol;
     var eta = managed ? supervisor.eta_s : session.eta_s;
@@ -294,6 +295,7 @@
     var capabilities = supervisor.capabilities || {};
     var hasToken = operatorToken.length > 0;
     var canControl = data.control_enabled === true && supervisor.available === true && hasToken;
+    var taskControlAvailable = supervisor.control_connected === true;
     var terminal = ["IDLE", "COMPLETE", "ERROR", "ABORTED"].indexOf(supervisor.state) >= 0;
     var unmanagedActive = observedActive && (!supervisor.available || session.id !== supervisor.session_id);
     var prepareAllowed = canControl && terminal && !unmanagedActive && supervisor.process_running !== true;
@@ -303,17 +305,21 @@
     $("operator-elapsed").textContent = finiteNumber(elapsed) ? formatEta(elapsed) : "—";
     $("operator-eta").textContent = finiteNumber(eta) ? formatEta(eta) : "—";
     $("supervisor-connection").className = "status " + (supervisor.available ? "live" : "stale");
-    $("supervisor-connection").lastElementChild.textContent = supervisor.available ? "SUPERVISOR ONLINE" : "SUPERVISOR OFFLINE";
+    $("supervisor-connection").lastElementChild.textContent = !supervisor.available ? "SUPERVISOR OFFLINE" :
+      (supervisor.process_running && !taskControlAvailable ? "SUPERVISOR ONLINE · TASK CONTROL DEGRADED" : "SUPERVISOR ONLINE");
     $("control-token").disabled = data.control_enabled !== true;
     $("protocol-select").disabled = !prepareAllowed || protocolChoices.length === 0;
     $("prepare-button").disabled = !prepareAllowed;
     ["start", "stop", "abort", "bait_left", "bait_right"].forEach(function (name) {
       var button = $(name.replace("_", "-") + "-button");
-      button.disabled = !canControl || capabilities[name] !== true;
+      button.disabled = !canControl || !taskControlAvailable || capabilities[name] !== true;
       if (name.indexOf("bait_") === 0) button.hidden = capabilities[name] !== true;
     });
     if (data.control_enabled !== true) $("control-help").textContent = "Browser controls are disabled until the server is configured with RIG_MONITOR_CONTROL_TOKEN.";
     else if (!hasToken) $("control-help").textContent = "Enter the operator token configured on the monitor server to enable valid controls.";
+    else if (!supervisor.available) $("control-help").textContent = "Supervisor unavailable. Task state is unknown unless telemetry is still arriving; no launch is attempted.";
+    else if (supervisor.process_running && !taskControlAvailable) $("control-help").textContent = "Experiment process is alive but its control endpoint is unavailable. The task is left running.";
+    else if (supervisor.recovery_state === "STALE") $("control-help").textContent = "Saved process identity is stale; no controls were sent to that PID.";
     else if (unmanagedActive) $("control-help").textContent = "An active telemetry session is not registered with the supervisor. New launches are blocked.";
     else if (supervisor.process_running === true && terminal) $("control-help").textContent = "The previous experiment process has not exited. New launches are blocked.";
     else $("control-help").textContent = "Commands are acknowledged by the supervisor and validated by the experiment process.";

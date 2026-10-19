@@ -19,7 +19,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     state = MonitorState(stale_after_sec=args.stale_after_sec)
     receiver = UDPReceiver(state, host=args.udp_host, port=args.udp_port)
-    supervisor = SupervisorClient(args.supervisor_state_dir, args.supervisor_socket, args.udp_port)
+    supervisor = SupervisorClient(args.supervisor_state_dir, args.supervisor_socket)
     try:
         receiver.bind()
     except OSError as exc:
@@ -28,9 +28,9 @@ def main() -> int:
     receiver_thread = threading.Thread(target=receiver.serve_forever, name="udp-receiver", daemon=True)
     receiver_thread.start()
     try:
-        supervisor.ensure_running()
+        supervisor.connect()
     except SupervisorError as exc:
-        LOGGER.error("Unable to start supervisor: %s", exc)
+        LOGGER.error("Supervisor unavailable; dashboard controls remain offline: %s", exc)
     print(f"UDP telemetry listening on {args.udp_host}:{args.udp_port}", flush=True)
     print(f"Dashboard available at http://<host>:{args.web_port}", flush=True)
     if not args.control_token:

@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from monitor.state import MonitorState
+from monitor.supervisor import SupervisorClient, SupervisorError
 from monitor.web import create_app
 
 
@@ -21,7 +22,8 @@ class FakeSupervisor:
     def __init__(self):
         self.calls = []
         self.status = {"session_id": None, "protocol": None, "state": "IDLE",
-                       "capabilities": {}, "recent_events": [], "process_running": False}
+                       "capabilities": {}, "recent_events": [], "process_running": False,
+                       "control_connected": False, "recovery_state": "IDLE"}
 
     def request(self, request):
         self.calls.append(request)
@@ -32,7 +34,8 @@ class FakeSupervisor:
         if request["command"] == "control":
             if request["action"] == "prepare":
                 self.status.update({"session_id": "fake-1", "protocol": request["protocol"],
-                                    "state": "READY", "capabilities": {"start": True, "abort": True}})
+                                    "state": "READY", "capabilities": {"start": True, "abort": True},
+                                    "control_connected": True, "recovery_state": "CONNECTED"})
             return {"ok": True, "result": {"ack": {"ok": True}, "status": self.status}}
         return {"ok": False, "error": "unknown"}
 
@@ -156,8 +159,34 @@ class WebTests(unittest.TestCase):
         self.assertEqual(client.post("/api/control", json={"command": "prepare", "protocol": "other",
                                                             "request_id": "request-2"},
                                      headers={"Authorization": "Bearer secret"}).status_code, 400)
+        malicious = {"command": "prepare", "protocol": "fake; touch /tmp/should-not-exist",
+                     "request_id": "request-3", "shell": "touch /tmp/should-not-exist"}
+        self.assertEqual(client.post("/api/control", json=malicious,
+                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
         self.assertEqual(client.post("/api/control", json={"command": "start"},
                                      headers={"Authorization": "Bearer secret"}).status_code, 400)
+        self.assertEqual(client.post("/api/control?token=secret", json=body).status_code, 401)
+        self.assertEqual(client.post("/api/control", json=body,
+                                     headers={"Authorization": "Bearer invalid"}).status_code, 401)
+        self.assertNotIn("secret", client.post("/api/control", json=body,
+                                                headers={"Authorization": "Bearer invalid"}).get_data(as_text=True))
+
+    def test_missing_supervisor_is_reported_as_unknown_and_is_not_started(self):
+        class UnavailableSupervisor:
+            def request(self, _request):
+                raise SupervisorError("supervisor unavailable")
+
+        app = create_app(MonitorState(), HealthyReceiver(), supervisor=UnavailableSupervisor())
+        response = app.test_client().get("/api/state")
+        self.assertEqual(response.get_json()["supervisor"]["state"], "UNKNOWN")
+        self.assertEqual(response.get_json()["supervisor"]["recovery_state"], "SUPERVISOR_UNAVAILABLE")
+        self.assertEqual(response.get_json()["rig"]["session"]["state"], "IDLE")
+
+        with tempfile.TemporaryDirectory() as directory:
+            client = SupervisorClient(directory)
+            with self.assertRaises(SupervisorError):
+                client.connect()
+            self.assertFalse(Path(directory, "supervisor.sock").exists())
 
     def test_unmanaged_active_telemetry_blocks_duplicate_prepare(self):
         state = MonitorState()

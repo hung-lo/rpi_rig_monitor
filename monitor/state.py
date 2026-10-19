@@ -257,9 +257,11 @@ class MonitorState(object):
             result = copy.deepcopy(self._data)
             result["rig"] = copy.deepcopy(self._generic)
             result["recent_events"] = list(self._recent_events)
+            freshness = "FRESH" if connected else "STALE" if age is not None else "NONE"
             result.update({
                 "connected": connected,
-                "status": "LIVE" if connected else "STALE",
+                "status": "LIVE" if connected else "STALE" if age is not None else "NO TELEMETRY",
+                "telemetry_freshness": freshness,
                 "last_packet_age_sec": age,
             })
             return result

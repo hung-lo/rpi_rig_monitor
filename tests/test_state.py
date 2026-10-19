@@ -36,7 +36,16 @@ class MonitorStateTests(unittest.TestCase):
         snapshot = state.snapshot(now=16.0)
         self.assertFalse(snapshot["connected"])
         self.assertEqual(snapshot["status"], "STALE")
+        self.assertEqual(snapshot["telemetry_freshness"], "STALE")
         self.assertEqual(snapshot["trial"], 9)
+
+    def test_telemetry_freshness_distinguishes_none_from_stale_and_live(self):
+        state = MonitorState(stale_after_sec=5.0)
+        self.assertEqual(state.snapshot(now=10.0)["telemetry_freshness"], "NONE")
+        self.assertEqual(state.snapshot(now=10.0)["status"], "NO TELEMETRY")
+        state.update({"type": "state", "session_id": "s1"}, received_at=10.0)
+        self.assertEqual(state.snapshot(now=11.0)["telemetry_freshness"], "FRESH")
+        self.assertEqual(state.snapshot(now=16.0)["telemetry_freshness"], "STALE")
 
     def test_session_change_clears_history(self):
         state = MonitorState()

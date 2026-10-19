@@ -27,17 +27,20 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
                 response = supervisor.request({"command": "status"})
                 result["supervisor"] = _public_status(response.get("status", {}))
             except SupervisorError as exc:
-                result["supervisor"] = {"available": False, "state": "IDLE", "error": str(exc), "capabilities": {}}
+                result["supervisor"] = {"available": False, "state": "UNKNOWN", "error": str(exc),
+                                         "capabilities": {}, "control_connected": False,
+                                         "recovery_state": "SUPERVISOR_UNAVAILABLE"}
         else:
-            result["supervisor"] = {"available": False, "state": "IDLE", "capabilities": {}}
+            result["supervisor"] = {"available": False, "state": "UNKNOWN", "capabilities": {},
+                                     "control_connected": False, "recovery_state": "SUPERVISOR_UNAVAILABLE"}
         return jsonify(result)
 
     @app.route("/api/protocols")
     def api_protocols():
         try:
-            response = (supervisor.request({"command": "protocols"}) if supervisor is not None else
-                        {"protocols": [{"id": key, "display_name": value["display_name"], "available": True}
-                                       for key, value in sorted(PROTOCOLS.items())]})
+            if supervisor is None:
+                return jsonify({"error": "supervisor unavailable"}), 503
+            response = supervisor.request({"command": "protocols"})
             return jsonify(response.get("protocols", []))
         except SupervisorError as exc:
             return jsonify({"error": str(exc)}), 503
@@ -111,4 +114,8 @@ def _public_status(status):
             "elapsed_s": status.get("elapsed_s"), "eta_s": status.get("eta_s"),
             "capabilities": status.get("capabilities", {}),
             "recent_events": status.get("recent_events", []),
-            "process_running": status.get("process_running", False)}
+            "process_running": status.get("process_running", False),
+            "control_connected": status.get("control_connected", False),
+            "recovery_state": status.get("recovery_state", "UNKNOWN"),
+            "stdout_path": status.get("stdout_path"), "stderr_path": status.get("stderr_path"),
+            "session_history": status.get("session_history", [])}
