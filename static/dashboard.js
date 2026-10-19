@@ -372,6 +372,8 @@
     else if (!supervisor.available) $("control-help").textContent = "Supervisor unavailable. Task state is unknown unless telemetry is still arriving; no launch is attempted.";
     else if (supervisor.process_running && !taskControlAvailable) $("control-help").textContent = "Experiment process is alive but its control endpoint is unavailable. The task is left running.";
     else if (supervisor.recovery_state === "STALE") $("control-help").textContent = "Saved process identity is stale; no controls were sent to that PID.";
+    else if (supervisor.recovery_diagnostic) $("control-help").textContent = supervisor.recovery_diagnostic;
+    else if (supervisor.engine_error_summary) $("control-help").textContent = supervisor.engine_error_summary;
     else if (unmanagedActive) $("control-help").textContent = "An active telemetry session is not registered with the supervisor. New launches are blocked.";
     else if (supervisor.process_running === true && terminal) $("control-help").textContent = "The previous experiment process has not exited. New launches are blocked.";
     else $("control-help").textContent = "Commands are acknowledged by the supervisor and validated by the experiment process.";

@@ -129,5 +129,9 @@ def _public_status(status):
             "process_running": status.get("process_running", False),
             "control_connected": status.get("control_connected", False),
             "recovery_state": status.get("recovery_state", "UNKNOWN"),
+            "lifecycle_source": status.get("lifecycle_source"),
+            "recovery_diagnostic": status.get("recovery_diagnostic"),
+            "terminal_reason": status.get("terminal_reason"),
+            "engine_error_summary": status.get("engine_error_summary"),
             "stdout_path": status.get("stdout_path"), "stderr_path": status.get("stderr_path"),
             "session_history": status.get("session_history", [])}

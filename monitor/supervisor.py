@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -37,6 +38,12 @@ def _new_record():
         "control_schema_version": 1,
         "protocol_display_name": None, "preset_display_name": None, "adapter_type": None,
         "subject_id": None, "working_directory": None, "launch_metadata": {},
+        "control_state_path": None, "control_state_artifact_type": None, "control_instance_id": None,
+        "terminal_reason": None, "terminal_command": None, "terminal_request_id": None,
+        "engine_error_summary": None, "session_output_path": None,
+        "control_state_updated_at_utc": None, "control_state_updated_monotonic_ns": None,
+        "engine_lifecycle_metadata": {},
+        "lifecycle_source": None, "recovery_diagnostic": None,
         "state": "IDLE", "elapsed_s": None,
         "eta_s": None, "pid": None, "command": None, "config_path": None,
         "started_at": None, "started_at_utc": None, "started_monotonic": None,
@@ -60,6 +67,29 @@ def _process_identity(pid):
                 "process_starttime": int(fields[19]), "process_boot_id": boot_id}
     except (OSError, ValueError, IndexError, TypeError):
         return None
+
+
+def _read_control_state_document(path):
+    try:
+        state_path = Path(path)
+        info = state_path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_uid != os.geteuid()):
+            return None, "file ownership or permissions are invalid"
+        if info.st_size > 65536:
+            return None, "file is oversized"
+        with state_path.open("r") as stream:
+            document = json.load(stream)
+    except FileNotFoundError:
+        return None, "file is missing"
+    except (OSError, ValueError, TypeError):
+        return None, "file is unreadable or malformed"
+    if not isinstance(document, dict):
+        return None, "document is not an object"
+    if (type(document.get("schema_version")) is not int
+            or document["schema_version"] != ENGINE_CONTROL_SCHEMA_VERSION):
+        return None, "unsupported schema version"
+    return document, None
 
 
 def _rpc(path, request, timeout=2.0):
@@ -190,13 +220,131 @@ class SupervisorServer:
             raise SupervisorError(str(error))
         return response
 
+    def _learn_control_instance_from_state_file(self):
+        if self.record.get("control_instance_id") or not self.record.get("control_state_path"):
+            return False
+        document, error = _read_control_state_document(self.record["control_state_path"])
+        if error:
+            return False
+        if (document.get("session_id") != (self.record.get("engine_session_id") or self.record.get("session_id"))
+                or document.get("protocol") != (self.record.get("engine_protocol_id") or self.record.get("protocol"))
+                or document.get("artifact_type") != self.record.get("control_state_artifact_type")
+                or type(document.get("process_id")) is not int
+                or document["process_id"] != self.record.get("pid")
+                or not isinstance(document.get("control_instance_id"), str)
+                or not document["control_instance_id"]):
+            return False
+        self.record["control_instance_id"] = document["control_instance_id"]
+        return True
+
+    def _recover_terminal_state(self):
+        path = self.record.get("control_state_path")
+        if not path:
+            return False
+
+        def reject(reason):
+            self.record["recovery_diagnostic"] = "durable control state rejected: " + reason
+            return False
+
+        expected_instance = self.record.get("control_instance_id")
+        if not isinstance(expected_instance, str) or not expected_instance:
+            return reject("control instance identity was not learned from the live engine")
+        document, error = _read_control_state_document(path)
+        if error:
+            return reject(error)
+        required_fields = {
+            "session_id", "protocol", "state", "lifecycle", "terminal", "control_instance_id",
+            "process_id", "prepared_at_utc", "prepared_monotonic_ns", "ready_at_utc",
+            "ready_monotonic_ns", "start", "stop", "abort", "terminal_command",
+            "terminal_request_id", "updated_at_utc", "updated_monotonic_ns", "terminal_at_utc",
+            "terminal_monotonic_ns", "reason", "error_summary", "session_output_path",
+        }
+        if not required_fields.issubset(document):
+            return reject("required state fields are missing")
+        expected_session = self.record.get("engine_session_id") or self.record.get("session_id")
+        expected_protocol = self.record.get("engine_protocol_id") or self.record.get("protocol")
+        if document.get("artifact_type") != self.record.get("control_state_artifact_type"):
+            return reject("artifact type mismatch")
+        if document.get("session_id") != expected_session:
+            return reject("session identity mismatch")
+        if document.get("protocol") != expected_protocol:
+            return reject("protocol identity mismatch")
+        if document.get("control_instance_id") != expected_instance:
+            return reject("control instance identity mismatch")
+        pid = self.record.get("pid")
+        if type(document.get("process_id")) is not int or document["process_id"] != pid:
+            return reject("engine PID mismatch")
+        lifecycle = document.get("lifecycle")
+        if lifecycle != document.get("state"):
+            return reject("lifecycle fields disagree")
+        if document.get("terminal") is not True:
+            return reject("snapshot is not terminal")
+        if lifecycle not in TERMINAL_STATES:
+            return reject("unknown terminal lifecycle")
+        if (not isinstance(document.get("prepared_at_utc"), str)
+                or type(document.get("prepared_monotonic_ns")) is not int
+                or not isinstance(document.get("updated_at_utc"), str)
+                or type(document.get("updated_monotonic_ns")) is not int
+                or not isinstance(document.get("terminal_at_utc"), str)
+                or type(document.get("terminal_monotonic_ns")) is not int):
+            return reject("terminal timestamps are invalid")
+        ready_at, ready_monotonic = document.get("ready_at_utc"), document.get("ready_monotonic_ns")
+        if ((ready_at is None) != (ready_monotonic is None)
+                or (ready_at is not None and (not isinstance(ready_at, str)
+                                               or type(ready_monotonic) is not int))):
+            return reject("READY timestamps are invalid")
+        for key in ("start", "stop", "abort"):
+            metadata = document.get(key)
+            if metadata is not None and (
+                    not isinstance(metadata, dict)
+                    or not isinstance(metadata.get("request_id"), str)
+                    or not metadata.get("request_id")):
+                return reject("lifecycle request metadata is invalid")
+        if not isinstance(document.get("reason"), str) or not document["reason"]:
+            return reject("terminal reason is missing")
+        for key in ("reason", "terminal_command", "terminal_request_id", "error_summary",
+                    "session_output_path"):
+            if document.get(key) is not None and not isinstance(document[key], str):
+                return reject("terminal metadata is invalid")
+        terminal_command = document.get("terminal_command")
+        terminal_request_id = document.get("terminal_request_id")
+        if terminal_command not in (None, "stop", "abort"):
+            return reject("terminal command is invalid")
+        if terminal_command is None:
+            if terminal_request_id is not None:
+                return reject("terminal request has no command")
+        elif (not isinstance(document.get(terminal_command), dict)
+              or document[terminal_command].get("request_id") != terminal_request_id):
+            return reject("terminal request metadata does not match")
+
+        self.record.update({
+            "state": lifecycle,
+            "control_instance_id": expected_instance,
+            "lifecycle_source": "engine_control_state_file",
+            "recovery_state": "TERMINAL_RECOVERED",
+            "recovery_diagnostic": None,
+            "control_connected": False,
+            "capabilities": {},
+            "terminal_reason": document.get("reason"),
+            "terminal_command": document.get("terminal_command"),
+            "terminal_request_id": document.get("terminal_request_id"),
+            "engine_error_summary": document.get("error_summary"),
+            "session_output_path": document.get("session_output_path"),
+            "control_state_updated_at_utc": document["updated_at_utc"],
+            "control_state_updated_monotonic_ns": document["updated_monotonic_ns"],
+            "engine_lifecycle_metadata": {key: document.get(key) for key in ("start", "stop", "abort")},
+        })
+        return True
+
     def _refresh(self):
         if not self.record.get("session_id"):
             return
         previous = (self.record["state"], self.record.get("exit_status"),
                     self.record.get("process_running"), self.record.get("control_connected"),
                     self.record.get("recovery_state"), tuple(self.record.get("capabilities", {}).items()),
-                    tuple(self.record.get("recent_events", [])[:1]))
+                    tuple(self.record.get("recent_events", [])[:1]),
+                    self.record.get("control_instance_id"), self.record.get("lifecycle_source"),
+                    self.record.get("recovery_diagnostic"), self.record.get("terminal_request_id"))
         identity = _process_identity(self.record.get("pid"))
         expected = (self.record.get("process_starttime"), self.record.get("process_boot_id"),
                     self.record.get("process_group_id"), self.record.get("process_session_id"))
@@ -207,10 +355,12 @@ class SupervisorServer:
             self.record["control_connected"] = False
             self.record["capabilities"] = {}
             self.record["recovery_state"] = "EXITED"
-            if self.record["state"] in ACTIVE_STATES:
+            if self.process is not None:
+                self.record["exit_status"] = self.process.poll()
+            recovered = self._recover_terminal_state()
+            if not recovered and self.record["state"] in ACTIVE_STATES:
                 self.record["state"] = "ERROR"
-                if self.process is not None:
-                    self.record["exit_status"] = self.process.poll()
+                self.record["lifecycle_source"] = "supervisor_process_exit"
                 self.record["recent_events"].insert(0, {"event": "experiment_exit_without_final_state"})
                 del self.record["recent_events"][50:]
             self._save_if_changed(previous)
@@ -219,9 +369,13 @@ class SupervisorServer:
             self.record["process_running"] = False
             self.record["control_connected"] = False
             self.record["capabilities"] = {}
-            self.record["recovery_state"] = "STALE"
-            if self.record["state"] in ACTIVE_STATES:
+            if self._recover_terminal_state():
+                self.record["recovery_diagnostic"] = "terminal lifecycle recovered after saved PID identity expired"
+            else:
+                self.record["recovery_state"] = "STALE"
+            if self.record["state"] in ACTIVE_STATES and self.record.get("lifecycle_source") != "engine_control_state_file":
                 self.record["state"] = "ERROR"
+                self.record["lifecycle_source"] = "supervisor_process_exit"
             self.record["recent_events"].insert(0, {"event": "saved_process_identity_mismatch"})
             del self.record["recent_events"][50:]
             self._save_if_changed(previous)
@@ -237,8 +391,28 @@ class SupervisorServer:
                 self.record["recovery_state"] = "CONTROL_MISMATCH"
                 self._save_if_changed(previous)
                 return
+            instance_id = status.get("control_instance_id")
+            if self.record.get("control_state_path") and (
+                    type(status.get("control_schema_version")) is not int
+                    or status["control_schema_version"] != ENGINE_CONTROL_SCHEMA_VERSION
+                    or not isinstance(instance_id, str) or not instance_id):
+                self.record["control_connected"] = False
+                self.record["recovery_state"] = "CONTROL_MISMATCH"
+                self.record["recovery_diagnostic"] = "live engine omitted durable-state identity"
+                self._save_if_changed(previous)
+                return
+            if self.record.get("control_instance_id") and instance_id != self.record["control_instance_id"]:
+                self.record["control_connected"] = False
+                self.record["recovery_state"] = "CONTROL_MISMATCH"
+                self.record["recovery_diagnostic"] = "live engine control instance identity mismatch"
+                self._save_if_changed(previous)
+                return
             self.record["control_connected"] = True
             self.record["engine_session_id"] = status.get("session_id")
+            if isinstance(instance_id, str) and instance_id:
+                self.record["control_instance_id"] = instance_id
+            self.record["lifecycle_source"] = "live_control_socket"
+            self.record["recovery_diagnostic"] = None
             if self._adopting:
                 self.record["recovery_state"] = "ADOPTED"
             elif self.record.get("recovery_state") == "CONTROL_UNAVAILABLE":
@@ -249,6 +423,12 @@ class SupervisorServer:
             for key in ("state", "elapsed_s", "eta_s"):
                 if key in status:
                     self.record[key] = status[key]
+            if self.record["state"] not in TERMINAL_STATES:
+                for key in ("terminal_reason", "terminal_command", "terminal_request_id",
+                            "engine_error_summary", "control_state_updated_at_utc",
+                            "control_state_updated_monotonic_ns"):
+                    self.record[key] = None
+                self.record["engine_lifecycle_metadata"] = {}
             capabilities = status.get("capabilities", {})
             self.record["capabilities"] = capabilities if isinstance(capabilities, dict) else {}
             event = status.get("recent_event")
@@ -266,16 +446,24 @@ class SupervisorServer:
                 else:
                     self.record["exit_status"] = status.get("exit_status")
                     self.record["process_running"] = _process_identity(self.record.get("pid")) is not None
-        except (OSError, SupervisorError):
+        except OSError:
             self.record["control_connected"] = False
-            self.record["recovery_state"] = "CONTROL_UNAVAILABLE"
+            self._learn_control_instance_from_state_file()
+            if not self._recover_terminal_state():
+                self.record["recovery_state"] = "CONTROL_UNAVAILABLE"
+        except SupervisorError as exc:
+            self.record["control_connected"] = False
+            self.record["recovery_state"] = "CONTROL_MISMATCH"
+            self.record["recovery_diagnostic"] = "control response rejected: " + str(exc)[:200]
         self._save_if_changed(previous)
 
     def _save_if_changed(self, previous):
         current = (self.record["state"], self.record.get("exit_status"),
                    self.record.get("process_running"), self.record.get("control_connected"),
                    self.record.get("recovery_state"), tuple(self.record.get("capabilities", {}).items()),
-                   tuple(self.record.get("recent_events", [])[:1]))
+                   tuple(self.record.get("recent_events", [])[:1]),
+                   self.record.get("control_instance_id"), self.record.get("lifecycle_source"),
+                   self.record.get("recovery_diagnostic"), self.record.get("terminal_request_id"))
         if current != previous or time.monotonic() - self._last_status_save >= 1.0:
             self._save()
 
@@ -303,13 +491,19 @@ class SupervisorServer:
         control_acks = self.record.get("control_acks", {})
         session_id = "session-" + uuid.uuid4().hex[:16]
         endpoint = str(self.state_dir / (session_id + ".sock"))
+        state_path = self.state_dir / "control-state" / (session_id + ".json")
         stdout_path = self.log_dir / (session_id + ".stdout.log")
         stderr_path = self.log_dir / (session_id + ".stderr.log")
         try:
             launch = self.registry.resolve(protocol_id, preset_id, session_id, endpoint,
-                                           self.telemetry_port, runtime_fields or {})
+                                           self.telemetry_port, runtime_fields or {}, str(state_path))
         except RegistryError as exc:
             raise SupervisorError(str(exc))
+        if launch.control_state_path:
+            state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(str(state_path.parent), 0o700)
+            if state_path.exists() or state_path.is_symlink():
+                raise SupervisorError("generated control-state path already exists; refusing to reuse it")
         command = list(launch.argv)
         self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         history = list(self.record.get("session_history", []))
@@ -318,7 +512,11 @@ class SupervisorServer:
                 "session_id", "protocol", "protocol_id", "preset_id", "protocol_display_name",
                 "engine_protocol_id", "engine_session_id", "control_schema_version",
                 "preset_display_name", "adapter_type", "subject_id",
-                "working_directory", "launch_metadata",
+                "working_directory", "launch_metadata", "control_state_path", "control_state_artifact_type",
+                "control_instance_id",
+                "terminal_reason", "terminal_command", "terminal_request_id", "engine_error_summary",
+                "session_output_path", "control_state_updated_at_utc", "control_state_updated_monotonic_ns",
+                "engine_lifecycle_metadata",
                 "state", "pid", "process_starttime", "process_boot_id",
                 "process_group_id", "process_session_id", "command", "config_path", "started_at_utc",
                 "exit_status", "stdout_path", "stderr_path")})
@@ -336,9 +534,13 @@ class SupervisorServer:
                                                 "working_directory": launch.cwd,
                                                 "config_path": launch.config_path,
                                                 "engine_protocol_id": launch.engine_protocol_id,
-                                                "control_schema_version": 1},
+                                                "control_schema_version": 1,
+                                                "control_state_path": launch.control_state_path,
+                                                "control_state_artifact_type": launch.control_state_artifact_type},
                             "state": "PREPARING", "pid": None, "command": command,
                             "config_path": launch.config_path,
+                            "control_state_path": launch.control_state_path,
+                            "control_state_artifact_type": launch.control_state_artifact_type,
                             "started_at": time.time(),
                             "started_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             "started_monotonic": time.monotonic(), "control_endpoint": endpoint,
@@ -374,18 +576,32 @@ class SupervisorServer:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                self.record["state"] = "ERROR"
+                self._refresh()
                 self.record["exit_status"] = self.process.returncode
                 self._save()
-                raise SupervisorError("experiment exited during preparation")
+                detail = self.record.get("engine_error_summary")
+                message = "experiment exited during preparation"
+                if detail:
+                    message += ": " + detail
+                raise SupervisorError(message)
             try:
                 status = self._task_request({"command": "status"}).get("status", {})
                 if (not isinstance(status, dict) or status.get("session_id") != session_id or
                         status.get("protocol") != launch.engine_protocol_id or
                         status.get("state") not in ACTIVE_STATES + TERMINAL_STATES + ("IDLE",)):
                     raise SupervisorError("experiment control endpoint identity mismatch")
+                instance_id = status.get("control_instance_id")
+                if launch.control_state_path and (
+                        type(status.get("control_schema_version")) is not int
+                        or status["control_schema_version"] != ENGINE_CONTROL_SCHEMA_VERSION
+                        or not isinstance(instance_id, str) or not instance_id):
+                    raise SupervisorError("experiment status omitted durable-state identity")
                 self.record["state"] = status.get("state", "PREPARING")
                 self.record["engine_session_id"] = status.get("session_id")
+                if isinstance(instance_id, str) and instance_id:
+                    self.record["control_instance_id"] = instance_id
+                self.record["lifecycle_source"] = "live_control_socket"
+                self.record["recovery_diagnostic"] = None
                 capabilities = status.get("capabilities", {})
                 self.record["capabilities"] = capabilities if isinstance(capabilities, dict) else {}
                 self.record["control_connected"] = True
@@ -394,7 +610,7 @@ class SupervisorServer:
                 if self.record["state"] == "READY":
                     return self.snapshot()
             except (OSError, SupervisorError):
-                pass
+                self._learn_control_instance_from_state_file()
             time.sleep(0.05)
         self.process.terminate()
         self.record["state"] = "ERROR"

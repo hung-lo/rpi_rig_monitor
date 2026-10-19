@@ -12,6 +12,7 @@ from typing import Mapping, Optional, Tuple
 PROTOCOL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 FIELD_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SUBJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+ARTIFACT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 CONTROL_ADAPTERS = {"unix_json_v1"}
 
 
@@ -53,6 +54,8 @@ class Protocol:
     runtime_fields: Tuple[RuntimeField, ...] = ()
     working_directory: Optional[Path] = None
     engine_protocol_id: Optional[str] = None
+    control_state_flag: Optional[str] = None
+    control_state_artifact_type: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,8 @@ class LaunchSpec:
     env: Mapping[str, str]
     runtime_fields: Mapping[str, str]
     config_path: Optional[str] = None
+    control_state_path: Optional[str] = None
+    control_state_artifact_type: Optional[str] = None
 
 
 def validate_subject_id(value):
@@ -129,7 +134,8 @@ class ProtocolRegistry:
                            "presets": presets})
         return result
 
-    def resolve(self, protocol_id, preset_id, session_id, control_socket, telemetry_port, fields):
+    def resolve(self, protocol_id, preset_id, session_id, control_socket, telemetry_port, fields,
+                control_state_path=None):
         protocol = self.get(protocol_id)
         if protocol is None:
             raise RegistryError("unsupported protocol")
@@ -169,6 +175,12 @@ class ProtocolRegistry:
                 argv.extend((field.cli_flag, values[field.name]))
         argv.extend(("--control-socket", str(control_socket), "--session-id", session_id,
                      "--telemetry-port", str(telemetry_port)))
+        resolved_state_path = None
+        if protocol.control_state_flag is not None:
+            if not control_state_path:
+                raise RegistryError("protocol requires a supervisor control-state path")
+            argv.extend((protocol.control_state_flag, str(control_state_path)))
+            resolved_state_path = str(control_state_path)
         return LaunchSpec(
             protocol_id=protocol.protocol_id, preset_id=preset.preset_id,
             protocol_display_name=protocol.display_name, preset_display_name=preset.display_name,
@@ -178,6 +190,9 @@ class ProtocolRegistry:
             cwd=str(protocol.working_directory) if protocol.working_directory else None,
             env={}, runtime_fields=values,
             config_path=str(preset.config_path) if preset.config_path else None,
+            control_state_path=resolved_state_path,
+            control_state_artifact_type=(protocol.control_state_artifact_type
+                                         if resolved_state_path else None),
         )
 
 
@@ -211,6 +226,18 @@ def _validate_protocol(protocol):
             (not isinstance(protocol.engine_protocol_id, str)
              or not PROTOCOL_ID_RE.fullmatch(protocol.engine_protocol_id))):
         raise RegistryError("invalid engine protocol ID")
+    if (protocol.control_state_flag is not None and (
+            protocol.adapter_type != "unix_json_v1"
+            or not isinstance(protocol.control_state_flag, str)
+            or not re.fullmatch(r"--[a-z][a-z0-9-]*", protocol.control_state_flag)
+            or protocol.control_state_flag in {"--control-socket", "--session-id", "--telemetry-port"})):
+        raise RegistryError("invalid durable control-state CLI mapping")
+    if protocol.control_state_flag is not None:
+        if (not isinstance(protocol.control_state_artifact_type, str)
+                or not ARTIFACT_TYPE_RE.fullmatch(protocol.control_state_artifact_type)):
+            raise RegistryError("durable control-state artifact type is required")
+    elif protocol.control_state_artifact_type is not None:
+        raise RegistryError("control-state artifact type requires a control-state CLI mapping")
     if not protocol.executable or any(not isinstance(item, str) or not item or "\0" in item
                                       for item in protocol.executable):
         raise RegistryError("executable must be a non-empty list of argv strings")
@@ -255,6 +282,8 @@ def _validate_protocol(protocol):
             field_flags.add(field.cli_flag)
     if protocol.working_directory is not None and not isinstance(protocol.working_directory, Path):
         raise RegistryError("working_directory must be a Path")
+    if protocol.control_state_flag in field_flags:
+        raise RegistryError("durable control-state CLI mapping duplicates a runtime field")
 
 
 def _resolve_executable(executable):
@@ -272,7 +301,8 @@ def _resolve_executable(executable):
 
 def _protocol_from_json(raw, base_dir):
     required = {"protocol_id", "display_name", "description", "adapter_type", "executable", "presets"}
-    allowed = required | {"working_directory", "runtime_fields", "engine_protocol_id"}
+    allowed = required | {"working_directory", "runtime_fields", "engine_protocol_id", "control_state_flag",
+                          "control_state_artifact_type"}
     if not isinstance(raw, dict) or not required.issubset(raw) or set(raw) - allowed:
         raise RegistryError("invalid protocol entry in registry file")
     executable = raw["executable"]
@@ -314,7 +344,8 @@ def _protocol_from_json(raw, base_dir):
                                    item.get("type", "subject_id"), item.get("cli_flag")))
     return Protocol(raw["protocol_id"], raw["display_name"], raw["description"], raw["adapter_type"],
                     tuple(executable), tuple(presets), tuple(fields), working_directory,
-                    raw.get("engine_protocol_id"))
+                    raw.get("engine_protocol_id"), raw.get("control_state_flag"),
+                    raw.get("control_state_artifact_type"))
 
 
 def _config_path(value, base_dir):
