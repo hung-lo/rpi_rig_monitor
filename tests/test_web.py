@@ -153,6 +153,9 @@ class WebTests(unittest.TestCase):
 
     def test_control_requires_bearer_token_and_forwards_protocol_selection(self):
         supervisor = FakeSupervisor()
+        supervisor.status.update({"control_state_path": "/private/control-state/session.json",
+                                  "recovery_diagnostic": "durable control state rejected: wrong session",
+                                  "lifecycle_source": "engine_control_state_file"})
         client = create_app(MonitorState(), HealthyReceiver(), supervisor=supervisor,
                             control_token="secret").test_client()
         self.assertEqual(client.get("/api/protocols").get_json()[0]["protocol_id"], "fake")
@@ -167,10 +170,19 @@ class WebTests(unittest.TestCase):
                                                 "protocol_id": "fake", "preset_id": "standard",
                                                 "fields": {"subject_id": "example_mouse"},
                                                 "request_id": "request-1"})
+        public_status = client.get("/api/state").get_json()["supervisor"]
+        self.assertEqual(public_status["recovery_diagnostic"],
+                         "durable control state rejected: wrong session")
+        self.assertEqual(public_status["lifecycle_source"], "engine_control_state_file")
+        self.assertNotIn("control_state_path", public_status)
         headers = {"Authorization": "Bearer secret"}
         for name, value in (("executable", "/bin/sh"), ("argv", ["-c", "false"]),
                             ("cwd", "/tmp"), ("env", {"PATH": "/tmp"}),
                             ("control_socket", "/tmp/evil.sock"), ("config", "/etc/passwd"),
+                            ("control_state_path", "/tmp/attacker.json"),
+                            ("control_state_artifact_type", "attacker.state"),
+                            ("control_instance_id", "attacker-instance"),
+                            ("control_state_contents", {"state": "COMPLETE"}),
                             ("command_text", "false")):
             malicious = dict(body, request_id="attack-" + name, **{name: value})
             self.assertEqual(client.post("/api/control", json=malicious, headers=headers).status_code, 400)

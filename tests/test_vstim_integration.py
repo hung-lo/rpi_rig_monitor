@@ -17,7 +17,12 @@ try:
 except ImportError:  # unittest discovery remains usable without the optional integration runner.
     pytest = None
 
-from monitor.supervisor import SupervisorClient, SupervisorError, _rpc
+from monitor.supervisor import (
+    SupervisorClient,
+    SupervisorError,
+    _process_identity,
+    _rpc,
+)
 
 pytestmark = pytest.mark.vstim_integration if pytest is not None else None
 VSTIM_CHECKOUT = os.environ.get("RPI_VSTIM_CHECKOUT")
@@ -82,6 +87,8 @@ def _make_registry(path, executable, checkout, output_root, config=None):
         "description": "Natural-image task in the VStim FakeDisplayBackend simulation.",
         "adapter_type": "unix_json_v1",
         "engine_protocol_id": "natural-images",
+        "control_state_flag": "--control-state-file",
+        "control_state_artifact_type": "rpi_vstim.operator_control_state",
         "executable": [str(executable)],
         "working_directory": str(checkout),
         "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
@@ -139,6 +146,14 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
         supervisor = None
         web = None
         client = None
+        seen_control_state_paths = set()
+
+        def assert_new_control_state_path(status):
+            path = Path(status["control_state_path"])
+            assert str(path) not in seen_control_state_paths
+            seen_control_state_paths.add(str(path))
+            assert path.parent == state_dir / "control-state"
+            assert path.name == status["session_id"] + ".json"
 
         def start_supervisor():
             nonlocal supervisor
@@ -249,6 +264,7 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
                                fields={"subject_id": "example_mouse"})
             assert prepared["state"] == "READY"
             snapshot = client.request({"command": "status"})["status"]
+            assert_new_control_state_path(snapshot)
             assert snapshot["process_running"] and snapshot["control_connected"]
             assert snapshot["protocol_id"] == "natural_images"
             assert snapshot["preset_id"] == "operator_simulation"
@@ -259,9 +275,21 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert snapshot["subject_id"] == "example_mouse"
             assert snapshot["config_path"] == str(profile)
             assert snapshot["launch_metadata"]["config_path"] == str(profile)
+            control_state_path = Path(snapshot["control_state_path"])
+            assert control_state_path.parent == state_dir / "control-state"
+            assert control_state_path.name == snapshot["session_id"] + ".json"
+            assert control_state_path.is_file()
+            assert control_state_path.stat().st_mode & 0o777 == 0o600
+            assert snapshot["launch_metadata"]["control_state_path"] == str(control_state_path)
+            assert snapshot["control_state_artifact_type"] == "rpi_vstim.operator_control_state"
+            assert snapshot["launch_metadata"]["control_state_artifact_type"] == "rpi_vstim.operator_control_state"
+            assert snapshot["control_instance_id"]
+            assert "--control-state-file" in snapshot["command"]
+            assert snapshot["command"][snapshot["command"].index("--control-state-file") + 1] == str(control_state_path)
             assert "--simulate" in snapshot["command"]
             assert snapshot["command"][snapshot["command"].index("--mouse-id") + 1] == "example_mouse"
             assert "--operator-control" in snapshot["command"]
+            assert Path(snapshot["control_state_path"]).parent.stat().st_mode & 0o777 == 0o700
             assert Path(snapshot["stdout_path"]).is_file()
             assert Path(snapshot["stderr_path"]).is_file()
             assert snapshot["capabilities"].get("start") is True
@@ -276,6 +304,16 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert engine_status["status"]["elapsed_s"] == 0.0
             assert not list(output_root.rglob("session_manifest.json"))
             assert not list(output_root.rglob("events.jsonl"))
+
+            override_status, _ = _http(
+                web_port, "/api/control",
+                {"command": "prepare", "request_id": "override-state-path",
+                 "protocol_id": "natural_images", "preset_id": "operator_simulation",
+                 "fields": {"subject_id": "example_mouse"},
+                 "control_state_path": "/tmp/attacker.json",
+                 "control_state_artifact_type": "attacker.state"}, token,
+            )
+            assert override_status == 400
 
             _wait_until(lambda: _http(web_port, "/api/state")[1]["telemetry_freshness"] == "FRESH",
                         message="simulation telemetry did not become fresh")
@@ -313,10 +351,19 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             aborted_ready = wait_exited_state(client, "ABORTED")
             assert aborted_ready["session_id"] == session_id
             assert not (output_root / session_id).exists()
+            ready_state = json.loads(Path(aborted_ready["control_state_path"]).read_text())
+            assert ready_state["terminal"] is True and ready_state["lifecycle"] == "ABORTED"
+            assert ready_state["terminal_request_id"] == "real-abort-ready-2"
+            assert not Path(aborted_ready["control_endpoint"]).exists()
 
             # Invalid configuration fails clearly; restoring the registry permits a new launch.
-            broken_config = root / "broken.toml"
-            broken_config.write_text("[invalid\n")
+            broken_config = root / "missing-assets.toml"
+            empty_assets = root / "empty-assets"
+            empty_assets.mkdir()
+            broken_config.write_text(profile.read_text().replace(
+                'asset_root = "../../assets/natural_images/stringer_natimg2800_center_crop"',
+                'asset_root = "' + str(empty_assets) + '"',
+            ))
             _make_registry(registry_path, executable, checkout, output_root, config=broken_config)
             client = restart_supervisor()
             bad_status, failure = _http(
@@ -327,17 +374,28 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             )
             assert bad_status == 409 and "preparation" in failure["error"]
             failed = client.request({"command": "status"})["status"]
+            assert_new_control_state_path(failed)
             assert failed["state"] == "ERROR"
             assert failed["exit_status"] not in (None, 0)
+            error_state = json.loads(Path(failed["control_state_path"]).read_text())
+            assert error_state["terminal"] is True and error_state["lifecycle"] == "ERROR"
+            assert failed["lifecycle_source"] == "engine_control_state_file"
+            assert failed["engine_error_summary"]
             failure_log = Path(failed["stderr_path"]).read_text().lower()
-            assert failure_log and ("failed" in failure_log or "config" in failure_log)
+            assert "contains no images" in failed["engine_error_summary"].lower()
+            assert failure_log and ("failed" in failure_log or "asset" in failure_log)
 
             registry_path.write_text(good_registry)
             client = restart_supervisor()
             prepared = control("prepare", "valid-after-error", protocol_id="natural_images",
                                preset_id="operator_simulation", fields={"subject_id": "example_mouse"})
             assert prepared["state"] == "READY"
+            failed_history = next(item for item in prepared["session_history"]
+                                  if item["session_id"] == failed["session_id"])
+            assert failed_history["control_state_path"] == failed["control_state_path"]
+            assert Path(failed_history["control_state_path"]).is_file()
             snapshot = client.request({"command": "status"})["status"]
+            assert_new_control_state_path(snapshot)
             session_id = snapshot["session_id"]
 
             start_ack = control("start", "real-start-1")
@@ -401,26 +459,30 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert manifest.get("simulated") is True, sorted(manifest)
             assert manifest.get("display_backend") == "simulated"
             operator_metadata = json.loads((session_root / "operator_control.json").read_text())
-            if operator_metadata["stop"] is None:
-                pytest.xfail("engine acknowledged STOP but did not persist its stop metadata")
             assert operator_metadata["stop"]["request_id"] == "real-stop-1"
-            if process_after_stop["state"] == "ERROR":
-                assert process_after_stop["process_running"] is False
-                for log_path in (process_after_stop["stdout_path"], process_after_stop["stderr_path"]):
-                    assert Path(log_path).is_file()
-                pytest.xfail(
-                    "VStim may close its control socket after exiting for COMPLETE, "
-                    "before the supervisor reads the terminal lifecycle"
-                )
             assert process_after_stop["state"] == "COMPLETE"
             assert process_after_stop["process_running"] is False
+            stop_state = json.loads(Path(process_after_stop["control_state_path"]).read_text())
+            assert stop_state["terminal"] is True and stop_state["lifecycle"] == "COMPLETE"
+            assert stop_state["reason"] == "operator_stop"
+            assert stop_state["terminal_request_id"] == "real-stop-1"
+            assert not Path(process_after_stop["control_endpoint"]).exists()
             for log_path in (process_after_stop["stdout_path"], process_after_stop["stderr_path"]):
                 assert Path(log_path).is_file()
+
+            # Flask can restart after the engine exits; it reads the saved engine terminal state.
+            stop_web()
+            start_web(_port(socket.SOCK_DGRAM))
+            final_api = _http(web_port, "/api/state")[1]["supervisor"]
+            assert final_api["state"] == "COMPLETE"
+            assert final_api["session_id"] == session_id
+            assert control("stop", "real-stop-1")["ack"] == stop_ack["ack"]
 
             # READY abort has no acquisition output; running abort finalizes an aborted session.
             ready_abort_task = control("prepare", "abort-ready-prepare", protocol_id="natural_images",
                                        preset_id="operator_simulation",
                                        fields={"subject_id": "example_mouse"})
+            assert_new_control_state_path(ready_abort_task)
             ready_abort = control("abort", "real-abort-ready-1")
             assert ready_abort["ack"]["schema_version"] == 1
             assert ready_abort["ack"]["request_id"] == "real-abort-ready-1"
@@ -428,10 +490,14 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             aborted_ready = wait_exited_state(client, "ABORTED")
             assert aborted_ready["session_id"] == ready_abort_task["session_id"]
             assert not (output_root / ready_abort_task["session_id"]).exists()
+            ready_abort_file = json.loads(Path(aborted_ready["control_state_path"]).read_text())
+            assert ready_abort_file["lifecycle"] == "ABORTED"
+            assert ready_abort_file["terminal_request_id"] == "real-abort-ready-1"
 
             running_abort_task = control("prepare", "abort-running-prepare", protocol_id="natural_images",
                                          preset_id="operator_simulation",
                                          fields={"subject_id": "example_mouse"})
+            assert_new_control_state_path(running_abort_task)
             control("start", "real-start-abort")
             wait_engine_state(client, "RUNNING")
             running_abort = control("abort", "real-abort-running-1")
@@ -448,14 +514,42 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert json.loads(final_abort.read_text())["status"] == "ABORTED"
             abort_metadata = json.loads((final_abort.parent / "operator_control.json").read_text())
             assert abort_metadata["abort"]["request_id"] == "real-abort-running-1"
-            after_abort = wait_exit_or_error(client, "ABORTED")
-            if after_abort["state"] == "ERROR":
-                assert after_abort["exit_status"] in (None, 130)
-                pytest.xfail(
-                    "VStim closes its control socket after exiting for ABORTED, "
-                    "before the supervisor reads the terminal lifecycle"
-                )
+            # Replace the supervisor during terminal cleanup; registry changes affect only future launches.
+            registry_path.write_text(json.dumps({"schema_version": 1, "protocols": []}))
+            aborted_pid = running_abort_task["pid"]
+            _stop(supervisor)
+            supervisor = None
+
+            def engine_exited():
+                identity = _process_identity(aborted_pid)
+                return identity is None or identity["process_state"] == "Z"
+
+            _wait_until(engine_exited, timeout=8,
+                        message="VStim did not exit while its supervisor was down")
+            client = start_supervisor()
+            after_abort = wait_exited_state(client, "ABORTED")
             assert after_abort["state"] == "ABORTED"
+            abort_state = json.loads(Path(after_abort["control_state_path"]).read_text())
+            assert abort_state["terminal"] is True and abort_state["lifecycle"] == "ABORTED"
+            assert abort_state["terminal_request_id"] == "real-abort-running-1"
+            assert after_abort["terminal_request_id"] == "real-abort-running-1"
+            assert not Path(after_abort["control_endpoint"]).exists()
+            assert control("abort", "real-abort-running-1")["ack"] == running_abort["ack"]
+
+            # A short five-image simulation also reaches an engine-authored COMPLETE naturally.
+            registry_path.write_text(good_registry)
+            client = restart_supervisor()
+            natural_task = control("prepare", "natural-completion-prepare", protocol_id="natural_images",
+                                   preset_id="operator_simulation", fields={"subject_id": "example_mouse"})
+            assert_new_control_state_path(natural_task)
+            control("start", "natural-completion-start")
+            natural_complete = wait_exited_state(client, "COMPLETE", timeout=45)
+            natural_state = json.loads(Path(natural_complete["control_state_path"]).read_text())
+            assert natural_state["terminal"] is True and natural_state["lifecycle"] == "COMPLETE"
+            assert natural_state["reason"] == "natural_completion"
+            assert natural_state["terminal_request_id"] is None
+            assert natural_complete["session_id"] == natural_task["session_id"]
+            assert not Path(natural_complete["control_endpoint"]).exists()
         finally:
             if client is not None:
                 try:

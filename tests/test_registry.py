@@ -116,6 +116,52 @@ class RegistryTests(unittest.TestCase):
             self.assertNotIn(str(config), json.dumps(registry.public_metadata()))
             self.assertEqual(registry.public_metadata()[0]["protocol_id"], "external_demo")
 
+    def test_durable_state_path_is_server_supplied_by_registered_cli_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "external_task.py"
+            script.write_text("# external task fixture\n")
+            registry_file = root / "registry.json"
+            registry_file.write_text(json.dumps({
+                "schema_version": 1,
+                "protocols": [{
+                    "protocol_id": "external_demo", "display_name": "External Demo",
+                    "description": "Separate executable", "adapter_type": "unix_json_v1",
+                    "executable": [sys.executable, str(script)],
+                    "control_state_flag": "--control-state-file",
+                    "control_state_artifact_type": "external_demo.operator_state",
+                    "presets": [{"preset_id": "standard", "display_name": "Standard"}],
+                }],
+            }))
+            registry = ProtocolRegistry.from_json_file(registry_file)
+            state_path = str(root / "state" / "session-1.json")
+            launch = registry.resolve("external_demo", "standard", "session-1", "/tmp/task.sock", 5055,
+                                      {}, state_path)
+            self.assertEqual(launch.control_state_path, state_path)
+            self.assertEqual(launch.control_state_artifact_type, "external_demo.operator_state")
+            self.assertEqual(launch.argv[-2:], ("--control-state-file", state_path))
+            self.assertNotIn("control_state_flag", json.dumps(registry.public_metadata()))
+            with self.assertRaisesRegex(RegistryError, "control-state path"):
+                registry.resolve("external_demo", "standard", "session-1", "/tmp/task.sock", 5055, {})
+
+    def test_durable_state_cli_mapping_must_be_safe_and_unique(self):
+        with self.assertRaisesRegex(RegistryError, "durable control-state"):
+            ProtocolRegistry((Protocol("external_demo", "External demo", "", "unix_json_v1",
+                                       (sys.executable,), (Preset("standard", "Standard", "", ()),),
+                                       control_state_flag="--control-socket",
+                                       control_state_artifact_type="external_demo.operator_state"),))
+        with self.assertRaisesRegex(RegistryError, "artifact type is required"):
+            ProtocolRegistry((Protocol("external_demo", "External demo", "", "unix_json_v1",
+                                       (sys.executable,), (Preset("standard", "Standard", "", ()),),
+                                       control_state_flag="--control-state-file"),))
+        with self.assertRaisesRegex(RegistryError, "duplicates a runtime field"):
+            ProtocolRegistry((Protocol("external_demo", "External demo", "", "unix_json_v1",
+                                       (sys.executable,), (Preset("standard", "Standard", "", ()),),
+                                       runtime_fields=(RuntimeField("subject_id", "Subject", False,
+                                                                    cli_flag="--control-state-file"),),
+                                       control_state_flag="--control-state-file",
+                                       control_state_artifact_type="external_demo.operator_state"),))
+
     def test_unknown_protocol_preset_and_runtime_fields_are_rejected(self):
         registry = default_registry()
         with self.assertRaisesRegex(RegistryError, "unsupported protocol"):

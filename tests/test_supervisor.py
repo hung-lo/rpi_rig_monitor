@@ -125,6 +125,8 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(prepared["preset_id"], "standard")
         self.assertEqual(prepared["subject_id"], "example_mouse")
         self.assertEqual(prepared["adapter_type"], "unix_json_v1")
+        self.assertIsNone(prepared["control_state_path"])
+        self.assertNotIn("--control-state-file", prepared["command"])
         self.assertEqual(prepared["launch_metadata"]["runtime_fields"], {"subject_id": "example_mouse"})
         self.assertEqual(prepared["supervisor_schema_version"], 1)
         self.assertEqual(prepared["process_starttime"], _process_identity(prepared["pid"])["process_starttime"])
@@ -255,6 +257,138 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(recovered["recovery_state"], "EXITED")
         self.assertFalse(recovered["process_running"])
         self.assertTrue(self._response("prepare", "fake")["ok"])
+
+    def _durable_record(self, directory, lifecycle="ABORTED", pid=2147483647):
+        state_dir = directory / "state"
+        state_path = state_dir / "control-state" / "monitor-session.json"
+        state_path.parent.mkdir(mode=0o700, parents=True)
+        document = {
+            "artifact_type": "rpi_vstim.operator_control_state", "schema_version": 1,
+            "session_id": "engine-session", "protocol": "natural-images", "state": lifecycle,
+            "lifecycle": lifecycle, "terminal": True, "control_instance_id": "instance-123",
+            "process_id": pid, "prepared_at_utc": "2026-10-18T23:59:00Z", "prepared_monotonic_ns": 1,
+            "ready_at_utc": "2026-10-18T23:59:01Z", "ready_monotonic_ns": 2,
+            "updated_at_utc": "2026-10-19T00:00:00Z", "updated_monotonic_ns": 10,
+            "terminal_at_utc": "2026-10-19T00:00:01Z", "terminal_monotonic_ns": 20,
+            "reason": {"COMPLETE": "operator_stop", "ABORTED": "operator_abort",
+                       "ERROR": "preparation_error"}[lifecycle],
+            "terminal_command": {"COMPLETE": "stop", "ABORTED": "abort", "ERROR": None}[lifecycle],
+            "terminal_request_id": {"COMPLETE": "stop-123", "ABORTED": "abort-123",
+                                    "ERROR": None}[lifecycle],
+            "error_summary": "simulated engine error" if lifecycle == "ERROR" else None,
+            "session_output_path": None, "start": None,
+            "stop": {"request_id": "stop-123"} if lifecycle == "COMPLETE" else None,
+            "abort": {"request_id": "abort-123"} if lifecycle == "ABORTED" else None,
+        }
+        state_path.write_text(json.dumps(document))
+        os.chmod(str(state_path), 0o600)
+        server = SupervisorServer(state_dir, state_dir / "supervisor.sock", telemetry_port=0)
+        server.record.update({
+            "session_id": "monitor-session", "engine_session_id": "engine-session",
+            "protocol": "natural_images", "protocol_id": "natural_images",
+            "engine_protocol_id": "natural-images", "state": "RUNNING", "pid": pid,
+            "process_starttime": 1, "process_boot_id": "old-boot", "process_group_id": pid,
+            "process_session_id": pid, "control_state_path": str(state_path),
+            "control_state_artifact_type": "rpi_vstim.operator_control_state",
+            "control_instance_id": "instance-123", "control_endpoint": str(state_dir / "gone.sock"),
+        })
+        server._save()
+        return server, document
+
+    def test_engine_durable_terminal_states_survive_supervisor_restart(self):
+        for lifecycle in ("COMPLETE", "ABORTED", "ERROR"):
+            with self.subTest(lifecycle=lifecycle):
+                case = self.state_dir / ("durable-" + lifecycle.lower())
+                case.mkdir()
+                server, document = self._durable_record(case, lifecycle)
+                restarted = SupervisorServer(server.state_dir, server.socket_path, telemetry_port=0)
+                recovered = restarted.snapshot()
+                self.assertEqual(recovered["state"], lifecycle)
+                self.assertEqual(recovered["lifecycle_source"], "engine_control_state_file")
+                self.assertEqual(recovered["recovery_state"], "TERMINAL_RECOVERED")
+                self.assertEqual(recovered["control_instance_id"], document["control_instance_id"])
+                self.assertEqual(recovered["control_state_path"], str(case / "state" / "control-state" / "monitor-session.json"))
+                expected_request = {"COMPLETE": "stop-123", "ABORTED": "abort-123", "ERROR": None}[lifecycle]
+                self.assertEqual(recovered["terminal_request_id"], expected_request)
+                if lifecycle == "COMPLETE":
+                    self.assertEqual(recovered["engine_lifecycle_metadata"]["stop"]["request_id"], "stop-123")
+                elif lifecycle == "ABORTED":
+                    self.assertEqual(recovered["engine_lifecycle_metadata"]["abort"]["request_id"], "abort-123")
+                if lifecycle == "ERROR":
+                    self.assertEqual(recovered["engine_error_summary"], "simulated engine error")
+                self.assertFalse(recovered["process_running"])
+                self.assertFalse(recovered["control_connected"])
+
+    def test_invalid_or_nonterminal_durable_state_never_invents_terminal_outcome(self):
+        cases = (
+            "missing", "empty", "malformed", "schema", "artifact", "required_field", "session", "protocol", "instance",
+            "unlearned_instance", "pid", "permissions", "timestamps", "terminal_request",
+            "nonterminal", "unknown_terminal",
+        )
+        for case_name in cases:
+            with self.subTest(case=case_name):
+                case = self.state_dir / ("invalid-durable-" + case_name)
+                case.mkdir()
+                server, document = self._durable_record(case)
+                path = Path(server.record["control_state_path"])
+                if case_name == "missing":
+                    path.unlink()
+                elif case_name == "empty":
+                    path.write_text("")
+                elif case_name == "malformed":
+                    path.write_text("{")
+                else:
+                    if case_name == "schema":
+                        document["schema_version"] = 2
+                    elif case_name == "artifact":
+                        document["artifact_type"] = "other.task.state"
+                    elif case_name == "required_field":
+                        del document["prepared_at_utc"]
+                    elif case_name == "session":
+                        document["session_id"] = "other-session"
+                    elif case_name == "protocol":
+                        document["protocol"] = "other-protocol"
+                    elif case_name == "instance":
+                        document["control_instance_id"] = "other-instance"
+                    elif case_name == "unlearned_instance":
+                        server.record["control_instance_id"] = None
+                        server._save()
+                    elif case_name == "pid":
+                        document["process_id"] += 1
+                    elif case_name == "timestamps":
+                        del document["prepared_at_utc"]
+                    elif case_name == "terminal_request":
+                        document["abort"]["request_id"] = "other-request"
+                    elif case_name == "nonterminal":
+                        document["state"] = document["lifecycle"] = "RUNNING"
+                        document["terminal"] = False
+                    elif case_name == "unknown_terminal":
+                        document["state"] = document["lifecycle"] = "FINISHED"
+                    path.write_text(json.dumps(document))
+                if path.exists():
+                    os.chmod(str(path), 0o644 if case_name == "permissions" else 0o600)
+                recovered = server.snapshot()
+                self.assertEqual(recovered["state"], "ERROR")
+                self.assertEqual(recovered["recovery_state"], "EXITED")
+                self.assertEqual(recovered["lifecycle_source"], "supervisor_process_exit")
+                self.assertIn("durable control state rejected", recovered["recovery_diagnostic"])
+
+    def test_terminal_file_can_recover_after_pid_identity_expires_without_adoption(self):
+        case = self.state_dir / "durable-pid-reuse"
+        case.mkdir()
+        server, _document = self._durable_record(case, "ABORTED", pid=os.getpid())
+        identity = _process_identity(os.getpid())
+        server.record.update({"process_starttime": identity["process_starttime"] + 1,
+                              "process_boot_id": identity["process_boot_id"],
+                              "process_group_id": identity["process_group_id"],
+                              "process_session_id": identity["process_session_id"]})
+        server._save()
+        recovered = server.snapshot()
+        self.assertEqual(recovered["state"], "ABORTED")
+        self.assertFalse(recovered["process_running"])
+        self.assertFalse(recovered["control_connected"])
+        self.assertIn("PID identity expired", recovered["recovery_diagnostic"])
+        self.assertIsNotNone(_process_identity(os.getpid()))
 
     def test_missing_control_socket_keeps_verified_process_running(self):
         state_dir = self.state_dir / "missing-control"
