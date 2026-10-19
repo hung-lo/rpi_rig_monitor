@@ -44,13 +44,14 @@ The long-term control/session lifecycle is `IDLE`, `PREPARING`, `READY`,
 must not derive scientific state from elapsed time, protocol names, or trial
 counters. A `READY` report means preflight has completed and Start is safe.
 
-Example status fields:
+Example control-status fields (UDP telemetry uses `lifecycle` instead of
+`state`):
 
 ```json
 {
   "session_id": "s1",
   "protocol": "go_nogo",
-  "lifecycle": "READY",
+  "state": "READY",
   "elapsed_s": 0,
   "eta_s": null,
   "capabilities": {"start": true, "stop": false, "abort": true, "bait_left": true, "bait_right": true, "bait_center": false, "pause": false}
@@ -152,7 +153,8 @@ validates identity/state fields in status, but it currently does not send or
 validate a control `schema_version` or require the response to echo a request
 ID. The task should deduplicate request IDs. This permissive v1 behavior must be
 made explicit or tightened before registering a real engine. The monitor does
-not use UDP for commands.
+not use UDP for commands. Control status uses `state`; UDP telemetry uses
+`lifecycle` and remains observational.
 
 Stable registry IDs belong to the monitor. If an engine uses a different
 protocol ID, the registry stores that as `engine_protocol_id` and the supervisor
