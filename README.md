@@ -1,14 +1,18 @@
 # rpi_rig_monitor
 
-Read-only monitoring dashboard for Raspberry Pi behavioral/visual-stimulus rigs.
+Operator GUI and persistent supervisor for a Raspberry Pi behavioral and
+visual-stimulation rig. `rpi_vstim_suite` remains the sole owner of KMS, GPIO,
+cameras, audio, reward timing, stimulus timing, and scientific event logging.
+The monitor's UDP telemetry is observational and may be lost; closing a browser
+or restarting Flask does not stop a supervised experiment.
 
-The monitor is observational only. Experimental controllers must never depend on the monitor being available; telemetry may be dropped. No control commands are sent back to experiment hardware. Phase 1 is LAN/local monitoring only.
+The current launch registry contains only a hardware-free fake task. Real
+protocol launch descriptors and engine control integration are future work.
+See [the engine interface proposal](docs/rpi_vstim_interface.md).
 
-## Requirements
+## Requirements and installation
 
-Python 3.7+. The code uses Python 3.7-era syntax, and `requirements.txt` fully pins the Flask stack to versions compatible with the Raspberry Pi 4B deployment target.
-
-## Installation
+Python 3.7+ and the pinned Flask stack:
 
 ```bash
 python3 -m venv .venv
@@ -16,107 +20,94 @@ source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 ```
 
-## Run with demo telemetry
-
-In terminal 1:
+## Run
 
 ```bash
-python run_monitor.py
+export RIG_MONITOR_CONTROL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python3 run_monitor.py
 ```
 
-In terminal 2:
+Open [http://localhost:8080](http://localhost:8080). Enter the configured token
+in the control panel to enable the actions advertised for the current session.
+The token is held only in the browser page memory. Without it, dashboard and
+telemetry remain available but control is disabled.
+
+By default Flask listens on `0.0.0.0:8080`, and telemetry listens on UDP
+`0.0.0.0:5055`. Override these with `--udp-host`, `--udp-port`, `--web-host`,
+`--web-port`, and `--stale-after-sec` or the corresponding `RIG_MONITOR_*`
+environment variables. The supervisor stores state and task logs under
+`$XDG_STATE_HOME/rpi-rig-monitor` (default `~/.local/state/rpi-rig-monitor`).
+Use `--supervisor-state-dir` and `--supervisor-socket` to set deployment paths.
+These paths are configurable because this repository has no existing service
+or runtime-directory convention; systemd integration is not included yet.
+
+The supervisor is a detached local process. It launches each experiment in its
+own process session and captures separate stdout/stderr logs. Flask reconnects
+to its owner-only Unix socket on restart. The web control API requires a bearer
+token and accepts only fixed semantic actions; it does not accept shell
+commands, GPIO numbers, or arbitrary process arguments.
+
+## Hardware-free operator exercise
+
+Start the monitor with the token configured, open the dashboard, and enter the
+same token. Select **Fake task (hardware-free)**, prepare, then verify the
+session reaches `READY`. Try Bait left while READY, start the task, then test
+Stop and Abort in separate sessions. The fake task writes operator bait as
+`OPERATOR_REWARD` to its session log and never accesses hardware.
+
+While a fake task is running, close the browser or restart `run_monitor.py`.
+The task continues under the supervisor; reopening the dashboard reconnects to
+the same session. UDP telemetry may be disabled or stale without changing task
+state. Preparing again while a supervised task is active is rejected. An
+active telemetry session that is not registered with the supervisor also
+blocks new launches.
+
+## Existing telemetry demos
+
+Run the reward-conditioning-style demo in a second terminal:
 
 ```bash
-python tools/send_demo_telemetry.py
+python3 tools/send_demo_telemetry.py
 ```
 
-Open [http://localhost:8080](http://localhost:8080). From another machine on the same LAN, open `http://<control-pi-lan-ip>:8080`.
+The demo is finite and stops after `--total-trials` completed trials. Use
+`--session-id` to select a stable ID; otherwise each invocation gets a unique
+UTC-based ID. `--contingency-phase acquisition` and `--contingency-phase
+reversal` exercise the partial-reversal display; `--legacy` exercises the
+older counter shape. Synthetic reward volume is `3.0 µL/train`, not a real
+calibration.
 
-The receiver listens on UDP `0.0.0.0:5055`; the dashboard listens on `0.0.0.0:8080`. Override these with `--udp-host`, `--udp-port`, `--web-host`, `--web-port`, and `--stale-after-sec` (or the corresponding `RIG_MONITOR_*` environment variables).
-
-The browser polls `/api/state` approximately every 300 ms for responsive
-operator feedback while keeping CPU/browser load modest on the Raspberry Pi
-control machine. Dashboard timing remains observational and is not a
-scientific timing measurement. The browser poll rate is independent of the
-Box151 UDP telemetry cadence and does not change the monitor's approximately
-five-second stale threshold.
-
-## Phase 2A local image preview
-
-The dashboard can preview the current stimulus from a local copy of the natural-image library. The library is deliberately not included in this repository. On the current Control Pi, the default directory is `/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png`.
-
-Configure another directory with:
+The spout-training telemetry view can be exercised with:
 
 ```bash
-python run_monitor.py --image-dir /some/image/directory
+python3 tools/send_spout_demo_telemetry.py
 ```
 
-or:
+The current dashboard retains its legacy reward-conditioning and spout-training
+detail panels. Cumulative counters come from telemetry and are never rebuilt by
+counting UDP packets. “Likely consumed” is a contact-based estimate, not a
+direct intake measurement. Stimulus previews use a local natural-image library
+at `/home/pi/stimulus_assets/stringer_natimg2800_center_crop_png` by default;
+set `--image-dir` or `RIG_MONITOR_IMAGE_DIR` to use another directory.
 
-```bash
-export RIG_MONITOR_IMAGE_DIR=/some/image/directory
-python run_monitor.py
-```
+## Telemetry and status
 
-Telemetry sends only the image filename; the Control Pi browser preview serves the corresponding file from its local copy. If an image is missing, telemetry and the experiment are unaffected and the dashboard shows `Image preview unavailable`. The preview is an operator reference, not scientific stimulus-onset timing.
+Telemetry is UTF-8 JSON over UDP. The backend accepts `state`, `trial_complete`,
+`session`, and `event` messages, retains up to 50 recent trials/events, and
+preserves unknown protocol fields in a generic state envelope. The browser polls
+the API every 300 ms. After five seconds without a packet by default, telemetry
+shows `STALE` while the last known values remain visible.
 
-## Manual Phase 1 acceptance test
-
-1. Terminal 1: run `python run_monitor.py`.
-2. Terminal 2: run `python tools/send_demo_telemetry.py`.
-3. Open `http://localhost:8080`, or `http://<control-pi-ip>:8080` from another machine on the LAN.
-4. While the demo is running, verify that the dashboard loads, `LIVE` appears, trials increment, phases change, image filenames change, the last-trial summary updates, and recent history grows. Confirm that reward/omission/delivery fields agree and the anticipatory-lick label agrees with the emitted `lick_times_sec` window.
-5. After the finite demo sender exits, wait approximately the configured stale threshold (about five seconds by default). Verify that `LIVE` changes to `STALE`, while the last known state and recent history remain visible.
-6. Start the demo sender again with `python tools/send_demo_telemetry.py`. Verify that `STALE` changes to `LIVE`, a new session ID appears, old recent-trial history is cleared, and old image/trial/block/ETA values do not leak into the new session.
-7. While the monitor receiver is healthy, request `GET /health` and verify HTTP 200 with a response such as `{"status":"ok","udp_receiver":"ok"}`.
-
-`/api/state` `LIVE`/`STALE` reports telemetry freshness from the experiment or demo sender. `/health` reports the health of the monitor process and UDP receiver. These are intentionally separate concepts.
-
-The demo is a finite session and stops after `--total-trials` completed trials. Use `--session-id` to select a stable ID; otherwise each invocation gets a UTC-based unique demo ID.
-
-## Water and behavioral performance
-
-The WATER / BEHAVIOR panel displays authoritative cumulative counters supplied by Box151; the monitor does not reconstruct counts by counting UDP packets. Legacy telemetry keeps its rewarded-high, unrewarded-high, and low-probability readouts. The `exposure_reward_partial_reversal_v1` protocol instead shows current R+/R− anticipatory rates, discrimination, omission learning, reversal readiness, and high/medium/low exposure breakdowns. `acquisition` and `reversal` are displayed separately from the operational task phase. All anticipatory rates use Box151's 0–1 s definition.
-
-“Likely consumed” is an approximate contact-based estimate, not a direct fluid-intake measurement. Water volume and totals are displayed only when supplied by Box151. Dashboard timing remains observational and is not a scientific timing measurement.
-
-The demo sender uses `3.0 µL/train` as synthetic data only; it is not the real calibrated animal reward volume.
-
-## Spout-training telemetry
-
-When Box151 sends `protocol: spout_training`, the dashboard switches to a read-only spout-training view. Manual bait shows bait water and live lick feedback; scheduled spout rewards show retrieval, criterion, and separate training/bait/total water values. Manual bait rewards are not added to the scheduled reward history. The browser cannot deliver water, start training, or abort training, and all dashboard timing is operator feedback only.
-
-Run the deterministic local demo with:
-
-```bash
-python tools/send_spout_demo_telemetry.py
-```
-
-It exercises manual bait, five scheduled reward episodes, and a final `COMPLETE` state without requiring hardware. The monitor displays Box151-supplied counters and does not reconstruct cumulative values from UDP packet history.
-
-## Partial-reversal demo telemetry
-
-The default reward-conditioning demo exercises the 14-stimulus partial-reversal contract:
-
-```bash
-python tools/send_demo_telemetry.py --contingency-phase acquisition
-python tools/send_demo_telemetry.py --contingency-phase reversal
-```
-
-It sends `protocol_version: exposure_reward_partial_reversal_v1`, current reward eligibility, omission fields, exposure breakdown counters, and authoritative cumulative session totals. The demo uses `3.0 µL/train` as synthetic data only. Use `--legacy` to exercise the previous reward-conditioning telemetry shape.
-
-## Telemetry
-
-Telemetry is UTF-8 JSON over UDP. Phase 1 recognizes `state`, `trial_complete`, and `session` messages. The backend retains up to 50 completed trials; the browser displays the newest 20. If no packet arrives for five seconds, the UI marks telemetry `STALE` while preserving the last known state.
+`/api/state` reports telemetry freshness and supervisor session state
+separately. `/health` checks the UDP receiver and supervisor connection. A
+healthy monitor does not certify hardware health; those values are reported by
+the experiment engine.
 
 ## Tests
 
-Run the standard-library test suite with:
-
 ```bash
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 ```
 
-## Phase 1 non-goals
-
-There is no camera streaming, browser-to-rig control, remote command execution, persistent database, authentication, WebSockets, or communication back to Box151 or other experiment hardware.
+All supervisor and lifecycle tests use only the fake task and local sockets; no
+GPIO, KMS, camera, or audio device is used.
