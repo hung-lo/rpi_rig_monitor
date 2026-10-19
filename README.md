@@ -91,7 +91,10 @@ The Natural Images registration uses `protocol_id: natural_images`, engine ID
 Its fixed argv must include the VStim simulation profile, `--simulate`,
 `--operator-control`, and a temporary `--output-root`. Executable, checkout, and
 profile paths belong in the trusted registry file, not monitor source or browser
-requests. Missing paths make the entry unavailable.
+requests. The trusted registry maps `control_state_flag` and the expected
+`control_state_artifact_type` to a unique path under `<state-dir>/control-state/`;
+the browser cannot supply these values. Missing executable/config paths make the
+entry unavailable.
 
 ### systemd deployment
 
@@ -163,14 +166,12 @@ python3 -m pytest -m vstim_integration -q
 ```
 
 The test uses a temporary trusted registry and output directory. It restarts
-Flask and the supervisor at READY and RUNNING, exercises START, STOP, telemetry
-loss, registry reload, preparation failure, and ABORT from READY. When a
-terminal response is missed, VStim's final artifact can say COMPLETE or ABORTED
-while the supervisor reports ERROR; a prior run also found an acknowledged STOP
-missing from the final operator metadata. The optional test reports these
-engine/monitor lifecycle gaps as expected failures. Normal monitor tests skip
-this integration when the required environment variables are unset. This
-validates the real engine software-only through
+Flask and the supervisor at READY and RUNNING, exercises START, STOP, both ABORT
+paths, natural completion, telemetry loss, registry reload, and preparation
+failure. The supervisor validates VStim's durable terminal state after the
+engine socket closes; lifecycle is never inferred from an exit code. Normal
+monitor tests skip this integration when the configured VStim checkout is
+unavailable. This validates the real engine software-only through
 `FakeDisplayBackend`; Pi GUI, physical KMS, cameras, GPIO, audio, and reward
 delivery remain untested.
 

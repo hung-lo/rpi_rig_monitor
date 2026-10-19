@@ -24,6 +24,8 @@ Schema version 1 accepts these fields:
       "display_name": "External Demo",
       "description": "Example separate task process",
       "adapter_type": "unix_json_v1",
+      "control_state_flag": "--control-state-file",
+      "control_state_artifact_type": "external_demo.operator_state",
       "executable": ["/opt/external-demo/bin/external-demo"],
       "working_directory": "/opt/external-demo",
       "runtime_fields": [
@@ -55,6 +57,22 @@ the stable monitor `protocol_id`, optional engine-native `engine_protocol_id`,
 `preset_id`, subject ID, adapter, config path, cwd, and exact resolved argv. On recovery it
 uses that saved record and queries the existing task socket; it does not rebuild
 or launch from the current registry.
+
+`control_state_flag` and `control_state_artifact_type` are optional registry
+fields and must be supplied together. When configured, the supervisor appends
+that trusted CLI option with a unique path under its private `control-state/`
+directory and persists the path and expected artifact type with the session. A compatible task should
+write an owner-only, atomic JSON snapshot with schema version, session ID,
+engine protocol ID, engine PID, unique control-instance ID, lifecycle, terminal
+flag, timestamps, and terminal metadata. It must refuse an existing launch
+path and write terminal state before closing its control endpoint. After socket
+loss, the monitor accepts only an identity-matching terminal state
+(`COMPLETE`, `ABORTED`, or `ERROR`). It never maps process exit codes to
+scientific outcomes. Keep the file for run history; monitor cleanup is manual.
+
+A separate Go/NoGo executable can implement the same state-file schema and
+advertise its CLI option and artifact type through these trusted fields; the
+monitor does not import that repository or need protocol-specific source changes.
 
 The task process inherits the supervisor service environment, with
 `RIG_MONITOR_CONTROL_TOKEN` removed. The browser cannot alter the executable,
@@ -90,9 +108,8 @@ GPIO, or becomes a timing source.
 
 Natural Images PREPARE/READY, START/RUNNING, reconnect, STOP/COMPLETE, and READY
 -> ABORT have been validated software-only through the actual VStim
-operator-control engine using the generic registry. The engine/monitor
-terminal-state recovery race, seen after STOP and RUNNING -> ABORT, is documented in
-[`rpi_vstim_interface.md`](rpi_vstim_interface.md). Its stable monitor ID is
+operator-control engine using the generic registry. The supervisor recovers
+engine-authored terminal state after the control socket closes. Its stable monitor ID is
 `natural_images`; the engine reports `natural-images`. A deployment entry uses
 adapter `unix_json_v1`, preset ID `operator_simulation`, and fixed argv built
 from these components:
@@ -112,7 +129,7 @@ application source or browser input. The simulation profile uses
 `FakeDisplayBackend` and a simulated hardware backend. The registry entry must
 include `--simulate`; no physical Natural Images preset is provided. The local
 integration test targets VStim
-`ff3b9f7406962023bfe248bdf8a8b09a623362dd` with Python 3.13. This does not
+`9931500ab4d603ea412e119b065372ba3c887d3d` with Python 3.13. This does not
 validate Pi deployment or physical KMS, cameras, GPIO, audio, or reward output.
 
 ## Separate Go/NoGo repository

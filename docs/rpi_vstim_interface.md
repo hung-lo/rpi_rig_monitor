@@ -113,34 +113,45 @@ returns the previous result without reissuing the engine action.
 | Reconnect | A new status request reports the current engine state | Supervisor revalidates PID identity, then queries the existing control socket |
 | Duplicate mutation | Last 128 IDs are cached; same ID/body returns original ack; changed body is rejected | Persists the last 128 acknowledgements and does not repeat a retried action |
 
-The VStim adapter document still shows the older schema-optional examples. The
-tested controller supports the strict request form above, so runtime integration
-needs no engine change; aligning that engine-side documentation remains useful.
+### Durable terminal recovery
 
-### Terminal-state recovery gap
+Live control remains the first authority. If a task advertises a trusted
+`control_state_flag` in its server-side registry entry, the supervisor creates
+a fresh per-session path under `<monitor-state-dir>/control-state/`, passes it
+to the task, and records the path with the exact launch identity. The directory
+is mode `0700`; the engine artifact is mode `0600`. The browser cannot choose or
+override either value. Files remain beside supervisor state for run history and
+debugging; the monitor does not delete them automatically.
 
-When a terminal control response is missed, VStim writes the correct final
-status but closes the control socket before the supervisor can query it. This
-was observed for RUNNING -> ABORT (`ABORTED`, process exit 130), and once for
-STOP (`COMPLETE`, process exit 0). In those races the monitor's last correlated
-status is active/`FINISHING`, so it can report `ERROR`; it cannot safely infer
-the engine's final state from the current v1 control contract. Another run
-captured STOP as `COMPLETE`. The optional integration test reports the gap as an
-expected failure when encountered. READY -> ABORT is visible in the
-acknowledgement and works.
+For VStim, the file is a separate engine-authored
+`rpi_vstim.operator_control_state` artifact. It includes schema version 1,
+session and protocol IDs, lifecycle and terminal flag, update and terminal
+timestamps, engine PID, control-instance ID, START/STOP/ABORT metadata, terminal
+reason, concise error summary, and session output path. VStim refuses to create
+the first snapshot over an existing path. It writes a synced temporary file,
+then atomically creates or replaces the state file. Terminal state is persisted
+before the engine signals completion and closes its control socket.
 
-Before RUNNING abort can be fully integrated, the engine contract needs a
-durable terminal result the supervisor can verify after cleanup. The smallest
-robust option is to keep a final status query available until the supervisor
-retrieves or acknowledges terminal status, with a bounded fallback when the
-monitor is absent. Alternatively, define process exit-code-to-lifecycle
-semantics as part of the adapter contract and persist that mapping in launch
-metadata. The monitor does not add an undocumented exit-code guess.
+Before a task exits, the monitor learns `control_instance_id` from live status
+or from a matching engine state snapshot while the verified process is alive.
+After live control becomes unavailable, the monitor accepts a file only when
+artifact/schema version, session ID, engine protocol ID, engine PID, control
+instance ID, file owner, and mode match the saved launch. Both lifecycle fields
+must agree, `terminal` must be true, and the lifecycle must be `COMPLETE`,
+`ABORTED`, or `ERROR`. Malformed, stale, mismatched, and nonterminal snapshots
+are rejected with a short recovery diagnostic. A post-exit `READY`, `RUNNING`,
+or `FINISHING` snapshot does not prove a scientific outcome.
+
+Exit codes are bookkeeping only. The monitor never infers scientific lifecycle
+from exit code, stdout, session folders, or VStim-specific scientific files. If
+there is no valid engine terminal snapshot, it reports process exit without a
+recoverable terminal state rather than inventing COMPLETE or ABORTED.
 
 ## Status authority
 
 - Engine-authoritative: lifecycle, capabilities, elapsed time, ETA, and
-  protocol-specific scientific state from the Unix control status.
+  protocol-specific state from live Unix control; after control disappears,
+  only an identity-checked terminal state file can supply final lifecycle.
 - Supervisor-derived: process existence and identity, saved launch argv/metadata,
   control connectivity, and persistent stdout/stderr paths.
 - Telemetry-observational: hardware snapshots, integrity snapshots, recent event
@@ -206,7 +217,12 @@ strings are not part of the interface.
 
 The monitor's trusted registry implements `unix_json_v1`. It starts a registered
 executable with structured argv and supplies `--control-socket`, `--session-id`,
-and `--telemetry-port`. The task owns its Unix socket and authoritative
+and `--telemetry-port`. A protocol that implements durable terminal recovery
+may declare a trusted CLI flag such as `control_state_flag: "--control-state-file"`;
+the registry also records that task's expected `control_state_artifact_type`.
+The supervisor supplies its own unique path and validates against the saved
+artifact type on recovery. This is optional, so existing fake and external
+fixtures without durable-state support remain compatible. The task owns its Unix socket and authoritative
 lifecycle. Its status response contains `protocol`, `session_id`, `state`, and
 runtime `capabilities`; elapsed/ETA may be null when not known. All responses
 are schema- and request-correlated. The monitor checks that envelope before
@@ -231,9 +247,10 @@ registry supplies its executable, working directory, and the
 temporary output root, and the validated subject ID as `--mouse-id`. The
 integration asserts `--simulate` is present. PREPARE/READY, START/RUNNING,
 reconnect, STOP/COMPLETE, and READY -> ABORT have been exercised software-only
-against VStim commit `ff3b9f7406962023bfe248bdf8a8b09a623362dd`. RUNNING ->
-ABORT exposes the terminal-state recovery gap above. No physical Natural Images
-preset is registered.
+against VStim commit `9931500ab4d603ea412e119b065372ba3c887d3d`. The preset uses
+the engine's durable state file to recover STOP, ABORT, natural completion, and
+preparation ERROR after the socket closes. No physical Natural Images preset
+is registered.
 
 In that engine version, READY runs configuration, asset, and plan preflight but
 does not create a session, frame clock, KMS acquisition, cameras, GPIO, or audio.
