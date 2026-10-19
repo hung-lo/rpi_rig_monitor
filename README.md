@@ -22,6 +22,17 @@ python3 -m pip install -r requirements.txt
 
 ## Run
 
+Start the supervisor and Flask in separate terminals. Flask is only a client; it
+does not start or stop the supervisor automatically.
+
+Terminal 1:
+
+```bash
+python3 -m monitor.supervisor
+```
+
+Terminal 2:
+
 ```bash
 export RIG_MONITOR_CONTROL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 python3 run_monitor.py
@@ -38,14 +49,60 @@ By default Flask listens on `0.0.0.0:8080`, and telemetry listens on UDP
 environment variables. The supervisor stores state and task logs under
 `$XDG_STATE_HOME/rpi-rig-monitor` (default `~/.local/state/rpi-rig-monitor`).
 Use `--supervisor-state-dir` and `--supervisor-socket` to set deployment paths.
-These paths are configurable because this repository has no existing service
-or runtime-directory convention; systemd integration is not included yet.
+The supervisor stores atomic state in that directory and owner-only logs in its
+`logs` subdirectory.
 
-The supervisor is a detached local process. It launches each experiment in its
-own process session and captures separate stdout/stderr logs. Flask reconnects
-to its owner-only Unix socket on restart. The web control API requires a bearer
-token and accepts only fixed semantic actions; it does not accept shell
-commands, GPIO numbers, or arbitrary process arguments.
+The supervisor launches each experiment in its own process session and captures
+separate stdout/stderr logs. It persists a schema version, session metadata,
+argv, PID, Linux `/proc` start time and boot ID, process group/session IDs,
+endpoint, and last known lifecycle using atomic file replacement. On restart it
+adopts a task only when the PID identity and task endpoint's session/protocol
+agree. A live process with an unavailable endpoint is shown as degraded and is left running.
+Stale records and exited tasks do not block future launches.
+
+The supervisor tracks process and connection health; the experiment endpoint is
+authoritative for task lifecycle and capabilities. Telemetry freshness is
+independent and reported as `FRESH`, `STALE`, or `NONE`. Losing telemetry does
+not change task state.
+
+### systemd deployment
+
+An example unit is in
+[`deploy/rpi-rig-supervisor.service`](deploy/rpi-rig-supervisor.service). On a
+Pi, install the repo at `/opt/rpi_rig_monitor`, adjust `User` and `Group` to the
+local rig operator account, then install and enable the unit:
+
+```bash
+sudo install -m 0644 deploy/rpi-rig-supervisor.service /etc/systemd/system/rpi-rig-supervisor.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now rpi-rig-supervisor.service
+```
+
+The unit keeps session state/logs in `/var/lib/rpi-rig-monitor` and its
+supervisor socket in `/run/rpi-rig-monitor`. Configure Flask with matching
+paths, for example:
+
+```bash
+RIG_MONITOR_SUPERVISOR_STATE_DIR=/var/lib/rpi-rig-monitor \
+RIG_MONITOR_SUPERVISOR_SOCKET=/run/rpi-rig-monitor/supervisor.sock \
+python3 run_monitor.py
+```
+
+`KillMode=process` is deliberate: `systemctl restart rpi-rig-supervisor` stops
+the supervisor process without killing its detached experiment. Use the
+operator control API to stop or abort a task. Run the web service independently
+as the same local operator account so it can access the mode-0600 socket. If the
+supervisor cannot be reached, Flask reports it unavailable and keeps controls
+disabled. A host reboot does not preserve a running experiment process.
+
+### Prototype security boundary
+
+This is for a trusted lab LAN and local operator, not public internet exposure.
+Keep the bearer token on the server and enter it in the page's control field;
+the browser sends it only in the `Authorization` header, never a URL. The
+backend does not log the token. Control requires a request ID and accepts only
+registered protocol IDs and fixed actions. Telemetry UDP remains observational
+and is never a command path.
 
 ## Hardware-free operator exercise
 
@@ -56,11 +113,12 @@ Stop and Abort in separate sessions. The fake task writes operator bait as
 `OPERATOR_REWARD` to its session log and never accesses hardware.
 
 While a fake task is running, close the browser or restart `run_monitor.py`.
-The task continues under the supervisor; reopening the dashboard reconnects to
-the same session. UDP telemetry may be disabled or stale without changing task
-state. Preparing again while a supervised task is active is rejected. An
-active telemetry session that is not registered with the supervisor also
-blocks new launches.
+The task continues; Flask reconnects to the existing supervisor. Restarting the
+supervisor also leaves the task running: the new supervisor verifies its saved
+Linux process identity and reconnects to its control socket. UDP telemetry may
+be disabled or stale without changing task state. A second launch is rejected
+until the known task is terminal. An active telemetry session not registered
+with the supervisor also blocks new launches.
 
 ## Existing telemetry demos
 
@@ -98,10 +156,10 @@ preserves unknown protocol fields in a generic state envelope. The browser polls
 the API every 300 ms. After five seconds without a packet by default, telemetry
 shows `STALE` while the last known values remain visible.
 
-`/api/state` reports telemetry freshness and supervisor session state
-separately. `/health` checks the UDP receiver and supervisor connection. A
-healthy monitor does not certify hardware health; those values are reported by
-the experiment engine.
+`/api/state` reports `FRESH`, `STALE`, or `NONE` telemetry separately from
+supervisor process/control connectivity and task lifecycle. `/health` checks
+the UDP receiver and supervisor connection. A healthy monitor does not certify
+hardware health; those values are reported by the experiment engine.
 
 ## Tests
 

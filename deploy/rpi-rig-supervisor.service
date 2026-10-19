@@ -1,0 +1,30 @@
+[Unit]
+Description=Raspberry Pi rig experiment supervisor
+After=local-fs.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/rpi_rig_monitor
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/rpi_rig_monitor/.venv/bin/python -m monitor.supervisor --state-dir /var/lib/rpi-rig-monitor --socket-path /run/rpi-rig-monitor/supervisor.sock --telemetry-port 5055
+StateDirectory=rpi-rig-monitor
+StateDirectoryMode=0700
+RuntimeDirectory=rpi-rig-monitor
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=2
+# Keep detached experiment processes alive when this service is restarted.
+KillMode=process
+TimeoutStopSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -33,7 +33,8 @@ stable logical names and should not imply that telemetry is a health probe.
 Publish compact status at roughly 2–5 Hz and heavier diagnostics at 0.5–1 Hz.
 Sequence numbers and UTC timestamps help operators spot gaps, but the monitor's
 receive clock and UDP packets are never authoritative scientific timing or the
-event log. Staleness is displayed while the last values remain visible.
+event log. The GUI reports telemetry freshness as `FRESH`, `STALE`, or `NONE`;
+telemetry loss never changes the supervisor's last known lifecycle.
 
 ## Lifecycle and capabilities
 
@@ -65,10 +66,12 @@ validation boundary.
 Do not send commands over UDP. The persistent supervisor owns the experiment
 process and exposes an owner-only local Unix socket to Flask. The supervisor
 forwards semantic JSON-line requests over the running engine's owner-only
-control socket and returns the engine acknowledgement. The current development
-implementation uses a configurable per-user state directory and a per-session
-socket there; production may move sockets to a service-managed runtime
-directory when systemd deployment is added.
+control socket and returns the engine acknowledgement. In development, the
+supervisor and per-session task socket use the configured per-user state
+directory. The example systemd deployment puts persistent state and task
+sockets under `/var/lib/rpi-rig-monitor`, with the supervisor client socket
+under `/run/rpi-rig-monitor`; Flask must run as the same local operator account
+to access it.
 
 Proposed request envelope:
 
@@ -91,19 +94,51 @@ log. The monitor never knows pin numbers, pulse duration, or output polarity.
 
 ## Reconnection and error behavior
 
-The supervisor survives Flask and browser restarts. It stores the session ID,
-protocol, state, PID, exact argv, config path, start time, engine control
-endpoint, stdout/stderr paths, and exit status. On monitor startup, the monitor
-queries the existing supervisor; it must not launch a second process when an
-active session exists. The browser reconnects by polling supervisor state and
-fresh telemetry independently.
+The browser is disposable, Flask is disposable, the supervisor is restartable,
+and the experiment process is independent of all three. Flask only connects to
+the configured supervisor socket; it never silently starts a supervisor. The
+systemd unit in `deploy/rpi-rig-supervisor.service` starts the supervisor at
+boot, while the Flask web service is deployed separately with the same local
+operator account and socket configuration.
 
-If telemetry is stale, the task continues. If the supervisor is unavailable,
-the GUI reports control offline and refuses a launch. If the engine rejects a
+The supervisor atomically persists a versioned record containing session ID,
+protocol, last known state, exact argv, config path, PID, Linux `/proc` process
+start time and boot ID, process group/session IDs, UTC and monotonic launch
+times, control endpoint, stdout/stderr paths, and exit status. On restart it
+adopts only when PID start time, boot ID, group, and session still match and the
+control endpoint reports the same session ID and protocol. A missing or
+mismatched PID becomes an `ERROR` lifecycle plus a separate recovery status; a live process whose control
+socket is unavailable remains running and blocks duplicate launches. Recovery
+never signals or kills a task because telemetry or a socket is missing. Session
+metadata and log paths remain in persistent state after later sessions start.
+
+The lifecycle display is the engine's report when its control endpoint is
+connected. The supervisor owns process bookkeeping and last-known state, not
+scientific/task decisions. The engine remains authoritative for valid
+transitions, capabilities, task completion, and scientific events. Recovery
+indicators such as `control_connected`, `recovery_state`, and telemetry freshness
+are infrastructure status, not experiment states.
+
+The example systemd unit uses `KillMode=process` intentionally: systemd restart
+stops only the supervisor's main process and leaves its detached experiment
+child alive for adoption by the replacement supervisor. A host reboot does not
+preserve a running experiment process.
+
+If telemetry is stale or absent, the task continues. If the supervisor is
+unavailable, the GUI reports task state as unknown unless telemetry still
+reports an active session, and refuses a launch. If the engine rejects a
 command or its control socket is lost, the supervisor returns an error and
-preserves the last known lifecycle; it must not claim success. If the engine
+preserves the last known lifecycle while showing control unavailable; it must
+not claim success or kill the process. If the engine
 exits without a final lifecycle report, the supervisor records `ERROR` and the
 exit status when available.
+
+The local bearer token is intended for a trusted lab LAN and operator, not
+public internet exposure. It is sent only in the HTTP Authorization header,
+not in a URL or telemetry packet. The browser requires a request ID on each
+control request; the supervisor and engine deduplicate retries. Only explicitly
+registered protocol IDs and fixed command names are accepted; shell command
+strings are not part of the interface.
 
 ## Minimum engine work for real integration
 
@@ -120,8 +155,9 @@ complete monitor contract. Real integration needs only:
    protocol/lifecycle;
 4. acknowledge commands, deduplicate request IDs, and log operator-triggered
    rewards separately;
-5. report final state and exit information so the supervisor can reconnect
-   after Flask restarts.
+5. include session ID and protocol in every control status response, and report
+   final state and exit information so the supervisor can verify adoption after
+   Flask or supervisor restarts.
 
 The monitor currently launches only a hardware-free fake task. Real protocol
 launch descriptors, READY/preflight integration, and the final runtime socket
