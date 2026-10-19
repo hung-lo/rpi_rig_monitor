@@ -1,7 +1,12 @@
 import unittest
 
-from monitor.state import (MonitorState, NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS,
-                           SESSION_COUNTER_DEFAULTS, SESSION_STATE_DEFAULTS, SPOUT_SESSION_DEFAULTS)
+from monitor.state import (
+    NEW_REWARD_PROTOCOL_COUNTER_DEFAULTS,
+    SESSION_COUNTER_DEFAULTS,
+    SESSION_STATE_DEFAULTS,
+    SPOUT_SESSION_DEFAULTS,
+    MonitorState,
+)
 
 
 class MonitorStateTests(unittest.TestCase):
@@ -54,6 +59,48 @@ class MonitorStateTests(unittest.TestCase):
         state = MonitorState()
         self.assertFalse(state.update({"type": "diagnostic", "session_id": "ignored"}))
         self.assertIsNone(state.snapshot()["session_id"])
+
+    def test_generic_state_keeps_arbitrary_protocol_and_health_fields(self):
+        state = MonitorState()
+        packet = {
+            "type": "state", "session": {"id": "generic1", "protocol": "retinotopy",
+                                            "state": "RUNNING", "elapsed_s": 12.5, "eta_s": 30},
+            "hardware": {"display": "ok", "camera_1": "recording", "storage": "ok"},
+            "integrity": {"writer_errors": 2, "custom_counter": 9},
+            "protocol_state": {"orientation_deg": 45, "arbitrary": {"level": 2}},
+        }
+        self.assertTrue(state.update(packet, received_at=2.0))
+        rig = state.snapshot(now=2.0)["rig"]
+        self.assertEqual(rig["session"], {"id": "generic1", "protocol": "retinotopy", "state": "RUNNING",
+                                           "elapsed_s": 12.5, "eta_s": 30})
+        self.assertEqual(rig["hardware"]["camera_1"], "recording")
+        self.assertEqual(rig["integrity"]["writer_errors"], 2)
+        self.assertEqual(rig["integrity"]["custom_counter"], 9)
+        self.assertEqual(rig["protocol"]["arbitrary"], {"level": 2})
+
+    def test_events_are_bounded_and_new_session_clears_protocol_history(self):
+        state = MonitorState(history_limit=2)
+        state.update({"type": "state", "session_id": "a", "protocol": "natural_images",
+                      "protocol_state": {"image": "old.png"}}, received_at=1.0)
+        for index in range(3):
+            state.update({"type": "event", "session_id": "a", "event": f"event-{index}"},
+                         received_at=2.0 + index)
+        snapshot = state.snapshot(now=4.0)
+        self.assertEqual([event["event"] for event in snapshot["recent_events"]], ["event-2", "event-1"])
+        state.update({"type": "state", "session_id": "b", "protocol": "drifting_gratings"}, received_at=5.0)
+        snapshot = state.snapshot(now=5.0)
+        self.assertEqual(snapshot["recent_events"], [])
+        self.assertEqual(snapshot["rig"]["protocol"], {})
+        self.assertIsNone(snapshot["rig"]["integrity"]["writer_errors"])
+        self.assertEqual(snapshot["rig"]["session"]["id"], "b")
+
+    def test_new_generic_session_clears_previous_protocol_name(self):
+        state = MonitorState()
+        state.update({"type": "state", "session_id": "old", "protocol": "natural_images"}, received_at=1.0)
+        state.update({"type": "session", "session": {"id": "new"}}, received_at=2.0)
+        snapshot = state.snapshot(now=2.0)
+        self.assertIsNone(snapshot["protocol"])
+        self.assertIsNone(snapshot["rig"]["session"]["protocol"])
 
     def test_cumulative_fields_are_retained_without_local_reconstruction(self):
         state = MonitorState()

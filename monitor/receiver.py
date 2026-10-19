@@ -36,12 +36,14 @@ class UDPReceiver(object):
         """Bind synchronously so startup cannot advertise a dead receiver."""
         if self._socket is not None:
             return
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = None
         try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(0.5)
             sock.bind((self.host, self.port))
         except OSError:
-            sock.close()
+            if sock is not None:
+                sock.close()
             self._failed = True
             raise
         self._socket = sock

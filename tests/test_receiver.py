@@ -1,8 +1,8 @@
 import json
 import unittest
+from unittest import mock
 
-from monitor.receiver import decode_packet
-from monitor.receiver import UDPReceiver
+from monitor.receiver import UDPReceiver, decode_packet
 from monitor.state import MonitorState
 
 
@@ -23,6 +23,13 @@ class ReceiverTests(unittest.TestCase):
     def test_bind_failure_is_raised_and_marked_failed(self):
         receiver = UDPReceiver(MonitorState(), host="256.0.0.1", port=5055)
         with self.assertRaises(OSError):
+            receiver.bind()
+        self.assertEqual(receiver.health_status(), "failed")
+
+    def test_socket_creation_failure_is_marked_failed(self):
+        receiver = UDPReceiver(MonitorState())
+        with mock.patch("monitor.receiver.socket.socket", side_effect=OSError("socket denied")), \
+                self.assertRaises(OSError):
             receiver.bind()
         self.assertEqual(receiver.health_status(), "failed")
 
