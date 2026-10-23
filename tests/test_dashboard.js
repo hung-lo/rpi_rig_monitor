@@ -348,6 +348,22 @@ test("Natural Images settings expose only validated image count and mark edits f
   assert.equal(app.element("profile-save-button").disabled, false);
 });
 
+test("Runtime subject validation works with modern Unicode-set patterns", async () => {
+  const choices = protocols.map((protocol) => protocol.protocol_id === "natural_images" ? {
+    ...protocol,
+    runtime_fields: [{ name: "subject_id", display_name: "Subject / Mouse ID", required: true,
+      type: "subject_id" }],
+  } : protocol);
+  const app = await createDashboard(baseState(), choices);
+  const subject = app.element("runtime-fields").children.find((child) => child.id === "runtime-subject_id");
+  subject.value = "Fucci-Tri_7";
+  assert.doesNotThrow(() => new RegExp("^(?:" + subject.pattern + ")$", "v"));
+  assert.equal(subject.checkValidity(), true);
+  subject.value = "../mouse";
+  assert.equal(subject.checkValidity(), false);
+  assert.match(template, /id="settings-future-note"/);
+});
+
 test("Saved profile loads validated values and returns explicitly to preset defaults", async () => {
   const profile = { profile_id: "profile-0123456789abcdef0123456789abcdef", name: "Six images",
     version: 2, parameters: { image_count: 6 }, valid: true };

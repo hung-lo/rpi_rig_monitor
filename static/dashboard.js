@@ -635,7 +635,7 @@
       if (field.type !== "subject_id") return;
       var label = document.createElement("label"), input = document.createElement("input");
       input.type = "text"; input.name = field.name; input.maxLength = 64;
-      input.pattern = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}"; input.required = field.required === true;
+      input.pattern = "[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}"; input.required = field.required === true;
       input.autocomplete = "off"; label.textContent = field.display_name; label.htmlFor = "runtime-" + field.name;
       input.id = "runtime-" + field.name;
       container.appendChild(label); container.appendChild(input); runtimeFieldInputs[field.name] = input;
