@@ -84,7 +84,7 @@ class WebTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is unavailable")
     def test_lick_onset_highlight_clears_after_stale_or_session_change(self):
         script = Path(__file__).resolve().with_name("test_dashboard.js")
-        result = subprocess.run(["node", "--test", str(script)], capture_output=True, text=True)
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_dashboard_and_json_routes(self):
@@ -112,8 +112,17 @@ class WebTests(unittest.TestCase):
                            "integrity-status", "protocol-status", "recent-events", "protocol-select",
                            "preset-select", "runtime-fields",
                            "prepare-button", "start-button", "stop-button", "abort-button",
-                           "bait-left-button", "bait-right-button", "control-token"):
+                           "bait-left-button", "bait-right-button", "control-token", "operator-subject",
+                           "hardware-strip", "integrity-strip", "protocol-raw", "lick-aggregate-summary"):
             self.assertIn(f'id="{element_id}"'.encode(), dashboard.data)
+        for section in (b'class="grid live-grid"', b'class="status-strip"',
+                        b'id="protocol-diagnostics"', b'id="events-diagnostics"',
+                        b'id="hardware-diagnostics"', b'id="history-diagnostics"'):
+            self.assertIn(section, dashboard.data)
+        page = dashboard.data.decode("utf-8")
+        self.assertLess(page.index('id="abort-button"'), page.index('class="grid live-grid"'))
+        self.assertLess(page.index('class="grid live-grid"'), page.index('class="status-strip"'))
+        self.assertLess(page.index('class="status-strip"'), page.index('id="protocol-diagnostics"'))
 
         javascript = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.js").read_text()
         css = Path(__file__).resolve().parents[1].joinpath("static", "dashboard.css").read_text()
@@ -122,7 +131,7 @@ class WebTests(unittest.TestCase):
         self.assertIn('message.hidden = false', javascript)
         self.assertIn('empty.hidden = true', javascript)
         self.assertIn("var hasSession =", javascript)
-        self.assertIn('data.protocol === "spout_training"', javascript)
+        self.assertIn('activeProtocol === "spout_training"', javascript)
         self.assertIn('data.protocol_version === "exposure_reward_partial_reversal_v1"', javascript)
         self.assertIn("renderPartialReversalBehavior", javascript)
         self.assertIn("task_r_plus_cue_anticipatory_lick_trials_session", javascript)
@@ -136,8 +145,16 @@ class WebTests(unittest.TestCase):
         self.assertIn('data.phase === "MANUAL_START_DELAY"', javascript)
         self.assertIn('window.setInterval(poll, 300)', javascript)
         self.assertIn("pollInFlight", javascript)
-        self.assertIn("Array.isArray(hardwareValues.cameras)", javascript)
+        self.assertIn("Array.isArray(values.cameras)", javascript)
         self.assertIn('if (!camera || typeof camera !== "object") return;', javascript)
+        self.assertIn('setHidden("outcome-summary", isNatural)', javascript)
+        self.assertIn('data.lick_aggregate_available === true', javascript)
+        self.assertIn('function renderHardwareStatus(parent, values, compact)', javascript)
+        self.assertIn('"Session ended"', javascript)
+        self.assertIn('max-width: 1880px', css)
+        self.assertIn('max-width: 1399px', css)
+        self.assertIn('max-width: 999px', css)
+        self.assertIn('max-width: 600px', css)
         self.assertIn(b"No active stimulus", dashboard.data)
         self.assertIn(b"Stimulus image unavailable", dashboard.data)
         state_response = client.get("/api/state")

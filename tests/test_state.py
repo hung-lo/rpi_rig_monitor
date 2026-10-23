@@ -48,6 +48,7 @@ class MonitorStateTests(unittest.TestCase):
         }
         state.update(packet, received_at=10.0)
         snapshot = state.snapshot(now=10.1)
+        self.assertTrue(snapshot["lick_aggregate_available"])
         self.assertEqual(snapshot["stimulus_state"]["image_filename"], "natimg_center_0007.png")
         self.assertEqual(snapshot["stimulus_state"]["sequence_index"], 3)
         self.assertTrue(snapshot["lick_state"]["channels"]["left"]["contact_active"])
@@ -62,6 +63,16 @@ class MonitorStateTests(unittest.TestCase):
         self.assertIsNone(reset["lick_state"])
         self.assertEqual(reset["recent_lick_count_2s"], 0)
         self.assertEqual(reset["total_lick_onset_count_session"], 0)
+        self.assertFalse(reset["lick_aggregate_available"])
+
+    def test_per_channel_lick_state_does_not_claim_legacy_aggregate_fields(self):
+        state = MonitorState()
+        state.update({"type": "state", "session_id": "channels-only", "lick_state": {
+            "channels": {"left": {"available": True, "status": "available"}}
+        }}, received_at=10.0)
+        snapshot = state.snapshot(now=10.1)
+        self.assertFalse(snapshot["lick_aggregate_available"])
+        self.assertEqual(snapshot["total_lick_onset_count_session"], 0)
 
     def test_trial_history_is_bounded_and_preserved(self):
         state = MonitorState(history_limit=3)

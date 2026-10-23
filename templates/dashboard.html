@@ -9,26 +9,42 @@
 <body>
   <main class="shell">
     <header class="topbar">
-      <div>
+      <div class="brand">
         <p class="eyebrow">PI RIG OPERATOR</p>
         <h1>Rig Monitor</h1>
       </div>
-      <p class="meta">Session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span> · Contingency: <span id="contingency-phase">—</span></p>
-      <div class="connections"><div id="connection" class="status stale"><span class="dot"></span><span>TELEMETRY STALE</span></div><div id="supervisor-connection" class="status stale"><span class="dot"></span><span>SUPERVISOR OFFLINE</span></div></div>
-    </header>
-
-    <section class="card operator-panel">
-      <div class="operator-heading">
-        <div><p class="eyebrow">SESSION CONTROL</p><h2 id="operator-state">IDLE</h2></div>
-        <div class="operator-session"><span id="operator-session-id">No session</span><span id="operator-protocol">—</span></div>
+      <div class="operator-identity">
+        <strong id="operator-state">IDLE</strong>
+        <span id="operator-session-id">No session</span>
+        <span id="operator-protocol">—</span>
+        <span>Subject <b id="operator-subject">—</b></span>
       </div>
-      <div class="operator-metrics"><div><span>Elapsed</span><strong id="operator-elapsed">—</strong></div><div><span>ETA</span><strong id="operator-eta">—</strong></div></div>
+      <div class="operator-metrics">
+        <div><span>Elapsed</span><strong id="operator-elapsed">—</strong></div>
+        <div><span>ETA</span><strong id="operator-eta">—</strong></div>
+      </div>
+      <div class="connections">
+        <div id="connection" class="status stale"><span class="dot"></span><span>TELEMETRY STALE</span></div>
+        <div id="supervisor-connection" class="status stale"><span class="dot"></span><span>SUPERVISOR OFFLINE</span></div>
+      </div>
+    </header>
+    <p class="meta telemetry-meta">Telemetry session: <span id="session-id">—</span> · Protocol: <span id="protocol">—</span> · Contingency: <span id="contingency-phase">—</span></p>
+
+    <section class="card operator-panel" aria-label="Session controls">
+      <details id="launch-options" class="launch-options" open>
+        <summary>Protocol and session setup</summary>
+        <div class="launch-fields">
+          <label for="protocol-select">Protocol</label>
+          <select id="protocol-select" disabled><option value="">Loading protocols…</option></select>
+          <label for="preset-select">Preset</label>
+          <select id="preset-select" disabled><option value="">Loading presets…</option></select>
+          <div id="runtime-fields" class="runtime-fields"></div>
+          <label for="control-token">Control token</label>
+          <input id="control-token" type="password" autocomplete="off" aria-describedby="control-help">
+        </div>
+      </details>
       <div class="controls-row">
-        <label for="protocol-select">Protocol</label><select id="protocol-select" disabled><option value="">Loading protocols…</option></select>
-        <label for="preset-select">Preset</label><select id="preset-select" disabled><option value="">Loading presets…</option></select>
-        <div id="runtime-fields" class="runtime-fields"></div>
-        <label for="control-token">Control token</label><input id="control-token" type="password" autocomplete="off" aria-describedby="control-help">
-        <button id="prepare-button" type="button" disabled>Prepare session</button>
+        <button id="prepare-button" type="button" disabled>Prepare</button>
         <button id="start-button" type="button" disabled>Start task</button>
         <button id="stop-button" type="button" disabled>Stop</button>
         <button id="abort-button" class="danger" type="button" disabled>Abort</button>
@@ -39,151 +55,183 @@
       <p id="control-message" class="control-message" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="operator-summary">
-      <article class="card">
-        <p class="eyebrow">HARDWARE</p>
-        <div id="hardware-status" class="status-grid"></div>
-      </article>
-      <article class="card">
-        <p class="eyebrow">INTEGRITY</p>
-        <div id="integrity-status" class="status-grid"></div>
-      </article>
-      <article class="card protocol-status-card">
-        <p class="eyebrow">PROTOCOL STATUS</p>
-        <div id="protocol-status" class="status-grid"><span class="empty">No protocol state received</span></div>
-      </article>
-      <article class="card recent-events-card">
-        <p class="eyebrow">RECENT EVENTS</p>
-        <div id="recent-events" class="event-list"><span class="empty">No events received</span></div>
-      </article>
-    </section>
-
-    <section class="grid top-row">
+    <section class="grid live-grid" aria-label="Live experiment status">
       <article class="card stimulus-card">
         <p class="eyebrow">CURRENT STIMULUS</p>
         <div class="preview"><img id="preview-image" alt="Current natural image source preview" hidden><span id="stimulus-preview-empty" class="stimulus-preview-empty">No active stimulus</span><span id="preview-message" hidden>Stimulus image unavailable</span></div>
-        <div class="filename" id="image">—</div>
-        <div class="role" id="stimulus-role">—</div>
+        <div class="stimulus-identity">
+          <div class="filename" id="image">—</div>
+          <div class="role" id="stimulus-role">—</div>
+        </div>
         <div id="natural-stimulus-details" class="natural-stimulus-details" hidden>
           <div class="metric-row"><span>Source filename</span><strong id="stimulus-filename">—</strong></div>
           <div class="metric-row"><span>Trial / sequence</span><strong id="stimulus-sequence">—</strong></div>
           <div class="metric-row"><span>Telemetry</span><strong id="stimulus-freshness">—</strong></div>
         </div>
-        <div id="natural-lick-feedback" class="natural-lick-feedback" hidden>
-          <p class="eyebrow">LIVE LICKS · OBSERVATIONAL</p>
-          <div class="lick-channels">
-            <div class="lick-channel"><strong>LEFT</strong><span id="lick-left-status">Not available</span><span>Contact: <b id="lick-left-contact">—</b></span><span>Recent onset: <b id="lick-left-onset">—</b></span><span>Licks last 2 s: <b id="lick-left-recent">—</b></span><span>Total: <b id="lick-left-total">—</b></span></div>
-            <div class="lick-channel"><strong>RIGHT</strong><span id="lick-right-status">Not available</span><span>Contact: <b id="lick-right-contact">—</b></span><span>Recent onset: <b id="lick-right-onset">—</b></span><span>Licks last 2 s: <b id="lick-right-recent">—</b></span><span>Total: <b id="lick-right-total">—</b></span></div>
-          </div>
-        </div>
       </article>
+
       <article class="card session-card">
-        <p class="eyebrow" id="session-title">SESSION</p>
+        <p class="eyebrow" id="session-title">TASK / TRIAL</p>
         <div id="reward-conditioning-session-view">
-          <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
-          <div class="metric-row"><span>Contingency</span><strong id="phase-contingency">—</strong></div>
-          <div class="metric-row"><span>Trial</span><strong id="trial">—</strong></div>
-          <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
-          <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
-        <div id="legacy-behavior-view" class="behavior-section">
-          <p class="eyebrow">WATER / BEHAVIOR</p>
-          <div class="metric-row"><span>Reward contact</span><strong id="reward-contact-rate">—</strong></div>
-          <div class="metric-row"><span>Rewarded-cue anticip. lick</span><strong id="rewarded-cue-anticipatory-rate">—</strong></div>
-          <div class="metric-row"><span>Unrewarded-cue anticip. lick</span><strong id="unrewarded-cue-anticipatory-rate">—</strong></div>
-          <div class="metric-row secondary-metric"><span>Low-prob cue anticip. lick</span><strong id="low-prob-cue-anticipatory-rate">—</strong></div>
-          <div class="metric-row"><span>Water delivered</span><strong id="water-delivered">—</strong></div>
-          <div class="metric-row"><span>Likely consumed</span><strong id="water-likely-consumed">—</strong></div>
-          <div class="metric-row"><span>Reward volume</span><strong id="reward-volume">—</strong></div>
-          <p class="behavior-help">Reward contact is the fraction of verified delivered rewards with a lick before suction. Cue anticipatory rates use completed trials and the 0–1 s pre-reward window; omissions remain in the rewarded-cue denominator. Likely consumed is a contact-based estimate, not direct fluid-intake measurement.</p>
-        </div>
-        <div id="partial-reversal-behavior-view" class="behavior-section" hidden>
-          <p class="eyebrow">BEHAVIOR</p>
-          <div class="metric-row"><span>Reward contact</span><strong id="new-reward-contact-rate">—</strong></div>
-          <div class="metric-row"><span>Current R+ anticipatory lick</span><strong id="r-plus-anticipatory-rate">—</strong></div>
-          <div class="metric-row"><span>Current R− anticipatory lick</span><strong id="r-minus-anticipatory-rate">—</strong></div>
-          <div class="metric-row"><span>R+ − R− discrimination</span><strong id="r-discrimination">—</strong></div>
-          <div class="metric-row"><span>R+ omission anticipatory lick</span><strong id="r-plus-omission-rate">—</strong></div>
-          <div class="metric-row"><span>Reversal readiness</span><strong id="reversal-readiness">—</strong></div>
-          <p class="eyebrow secondary-heading">EXPOSURE BREAKDOWN</p>
-          <div class="metric-row"><span>High R+</span><strong id="high-r-plus-rate">—</strong></div>
-          <div class="metric-row"><span>High R−</span><strong id="high-r-minus-rate">—</strong></div>
-          <div class="metric-row"><span>Medium R+</span><strong id="medium-r-plus-rate">—</strong></div>
-          <div class="metric-row"><span>Medium R−</span><strong id="medium-r-minus-rate">—</strong></div>
-          <div class="metric-row"><span>Low R−</span><strong id="low-r-minus-rate">—</strong></div>
-          <div class="metric-row"><span>Water delivered</span><strong id="new-water-delivered">—</strong></div>
-          <div class="metric-row"><span>Likely consumed</span><strong id="new-water-likely-consumed">—</strong></div>
-          <div class="metric-row"><span>Reward volume</span><strong id="new-reward-volume">—</strong></div>
-          <p class="behavior-help">R+ and R− rates use experiment cumulative counters. Readiness is operator feedback only; it never changes the task.</p>
-        </div>
+          <div class="metric-grid task-metrics">
+            <div class="metric-row"><span>Phase</span><strong id="phase">—</strong></div>
+            <div class="metric-row" id="contingency-row"><span>Condition</span><strong id="phase-contingency">—</strong></div>
+            <div class="metric-row"><span>Trial / image</span><strong id="trial">—</strong></div>
+            <div class="metric-row"><span>Block</span><strong id="block">—</strong></div>
+            <div class="metric-row"><span>ETA</span><strong id="eta">—</strong></div>
+          </div>
+          <div id="legacy-behavior-view" class="behavior-section" hidden>
+            <p class="eyebrow">REWARD / BEHAVIOR</p>
+            <div class="metric-grid behavior-metrics">
+              <div class="metric-row"><span>Reward contact</span><strong id="reward-contact-rate">—</strong></div>
+              <div class="metric-row"><span>Rewarded-cue anticip. lick</span><strong id="rewarded-cue-anticipatory-rate">—</strong></div>
+              <div class="metric-row"><span>Unrewarded-cue anticip. lick</span><strong id="unrewarded-cue-anticipatory-rate">—</strong></div>
+              <div class="metric-row"><span>Water delivered</span><strong id="water-delivered">—</strong></div>
+            </div>
+            <details class="inline-details">
+              <summary>Additional reward metrics</summary>
+              <div class="metric-grid behavior-metrics">
+                <div class="metric-row"><span>Low-prob cue anticip. lick</span><strong id="low-prob-cue-anticipatory-rate">—</strong></div>
+                <div class="metric-row"><span>Likely consumed</span><strong id="water-likely-consumed">—</strong></div>
+                <div class="metric-row"><span>Reward volume</span><strong id="reward-volume">—</strong></div>
+              </div>
+              <p class="behavior-help">Reward contact is the fraction of verified delivered rewards with a lick before suction. Cue anticipatory rates use completed trials and the 0–1 s pre-reward window; omissions remain in the rewarded-cue denominator. Likely consumed is a contact-based estimate, not direct fluid-intake measurement.</p>
+            </details>
+          </div>
+          <div id="partial-reversal-behavior-view" class="behavior-section" hidden>
+            <p class="eyebrow">BEHAVIOR</p>
+            <div class="metric-grid behavior-metrics">
+              <div class="metric-row"><span>Reward contact</span><strong id="new-reward-contact-rate">—</strong></div>
+              <div class="metric-row"><span>Current R+ anticipatory lick</span><strong id="r-plus-anticipatory-rate">—</strong></div>
+              <div class="metric-row"><span>Current R− anticipatory lick</span><strong id="r-minus-anticipatory-rate">—</strong></div>
+              <div class="metric-row"><span>R+ − R− discrimination</span><strong id="r-discrimination">—</strong></div>
+              <div class="metric-row"><span>R+ omission anticipatory lick</span><strong id="r-plus-omission-rate">—</strong></div>
+              <div class="metric-row"><span>Reversal readiness</span><strong id="reversal-readiness">—</strong></div>
+              <div class="metric-row"><span>Water delivered</span><strong id="new-water-delivered">—</strong></div>
+            </div>
+            <details class="inline-details">
+              <summary>Exposure and water breakdown</summary>
+              <div class="metric-grid behavior-metrics">
+                <div class="metric-row"><span>High R+</span><strong id="high-r-plus-rate">—</strong></div>
+                <div class="metric-row"><span>High R−</span><strong id="high-r-minus-rate">—</strong></div>
+                <div class="metric-row"><span>Medium R+</span><strong id="medium-r-plus-rate">—</strong></div>
+                <div class="metric-row"><span>Medium R−</span><strong id="medium-r-minus-rate">—</strong></div>
+                <div class="metric-row"><span>Low R−</span><strong id="low-r-minus-rate">—</strong></div>
+                <div class="metric-row"><span>Likely consumed</span><strong id="new-water-likely-consumed">—</strong></div>
+                <div class="metric-row"><span>Reward volume</span><strong id="new-reward-volume">—</strong></div>
+              </div>
+              <p class="behavior-help">R+ and R− rates use experiment cumulative counters. Readiness is operator feedback only; it never changes the task.</p>
+            </details>
+          </div>
         </div>
         <div id="spout-session-view" class="protocol-view" hidden>
-          <div class="metric-row"><span>Phase</span><strong id="spout-phase">—</strong></div>
-          <div class="metric-row"><span>Reward</span><strong id="spout-reward-progress">—</strong></div>
-          <div class="metric-row"><span>Next reward</span><strong id="spout-next-reward">—</strong></div>
+          <div class="metric-grid task-metrics">
+            <div class="metric-row"><span>Phase</span><strong id="spout-phase">—</strong></div>
+            <div class="metric-row"><span>Reward progress</span><strong id="spout-reward-progress">—</strong></div>
+            <div class="metric-row"><span>Next reward</span><strong id="spout-next-reward">—</strong></div>
+          </div>
           <div id="spout-behavior-scheduled" class="behavior-section">
             <p class="eyebrow">WATER / BEHAVIOR</p>
-            <div class="metric-row"><span>Retrieval success</span><strong id="spout-retrieval-rate">—</strong></div>
-            <div class="metric-row"><span>Recent-20</span><strong id="spout-recent20">—</strong></div>
-            <div class="metric-row"><span>Criterion</span><strong id="spout-criterion">—</strong></div>
-            <div class="metric-row" id="spout-pass-reward-row" hidden><span>Pass reward</span><strong id="spout-pass-reward">—</strong></div>
-            <div class="metric-row"><span>Training water</span><strong id="spout-training-water">—</strong></div>
-            <div class="metric-row"><span>Bait water</span><strong id="spout-bait-water">—</strong></div>
-            <div class="metric-row"><span>Total water</span><strong id="spout-total-water">—</strong></div>
-            <div class="metric-row"><span>Reward volume</span><strong id="spout-reward-volume">—</strong></div>
-            <div class="metric-row"><span>Total licks</span><strong id="spout-total-licks">—</strong></div>
+            <div class="metric-grid behavior-metrics">
+              <div class="metric-row"><span>Retrieval success</span><strong id="spout-retrieval-rate">—</strong></div>
+              <div class="metric-row"><span>Recent-20</span><strong id="spout-recent20">—</strong></div>
+              <div class="metric-row"><span>Criterion</span><strong id="spout-criterion">—</strong></div>
+              <div class="metric-row" id="spout-pass-reward-row" hidden><span>Pass reward</span><strong id="spout-pass-reward">—</strong></div>
+              <div class="metric-row"><span>Training water</span><strong id="spout-training-water">—</strong></div>
+              <div class="metric-row"><span>Bait water</span><strong id="spout-bait-water">—</strong></div>
+              <div class="metric-row"><span>Total water</span><strong id="spout-total-water">—</strong></div>
+              <div class="metric-row"><span>Reward volume</span><strong id="spout-reward-volume">—</strong></div>
+              <div class="metric-row"><span>Total licks</span><strong id="spout-total-licks">—</strong></div>
+            </div>
           </div>
           <div id="spout-behavior-manual" class="behavior-section" hidden>
-            <p class="eyebrow">WATER / BEHAVIOR</p>
-            <div class="metric-row"><span>Bait drops</span><strong id="spout-bait-drops">—</strong></div>
-            <div class="metric-row"><span>Bait contacted</span><strong id="spout-bait-contact">—</strong></div>
-            <div class="metric-row"><span>Bait water</span><strong id="spout-manual-bait-water">—</strong></div>
-            <div class="metric-row"><span>Licks last 2 s</span><strong id="spout-recent-licks">—</strong></div>
-            <div class="metric-row"><span>Last lick</span><strong id="spout-last-lick">—</strong></div>
-            <div class="metric-row"><span>Status</span><strong id="spout-lick-status">quiet</strong></div>
-            <div class="metric-row"><span>Training</span><strong id="spout-training-status">Waiting for operator</strong></div>
+            <p class="eyebrow">MANUAL REWARD / BEHAVIOR</p>
+            <div class="metric-grid behavior-metrics">
+              <div class="metric-row"><span>Bait drops</span><strong id="spout-bait-drops">—</strong></div>
+              <div class="metric-row"><span>Bait contacted</span><strong id="spout-bait-contact">—</strong></div>
+              <div class="metric-row"><span>Bait water</span><strong id="spout-manual-bait-water">—</strong></div>
+              <div class="metric-row"><span>Licks last 2 s</span><strong id="spout-recent-licks">—</strong></div>
+              <div class="metric-row"><span>Last lick</span><strong id="spout-last-lick">—</strong></div>
+              <div class="metric-row"><span>Status</span><strong id="spout-lick-status">quiet</strong></div>
+              <div class="metric-row"><span>Training</span><strong id="spout-training-status">Waiting for operator</strong></div>
+            </div>
           </div>
           <p class="behavior-help">Retrieval and water values come from experiment telemetry. Lick status is operator feedback; dashboard timing is not scientific timing.</p>
         </div>
-      </article>
-      <article class="card last-trial-card">
-        <p class="eyebrow" id="last-panel-title">LAST TRIAL</p>
-        <div id="reward-conditioning-last-view">
-          <div id="last-summary" class="summary-line">No completed trial received</div>
-          <div id="last-trial" class="last-trial empty">No completed trial received</div>
-          <div class="lick-timeline-section">
-          <div class="lick-timeline-label">LICK TIMELINE</div>
-          <svg id="lick-timeline" viewBox="0 0 600 195" role="img" aria-label="Last-trial lick timeline"></svg>
+        <div id="outcome-summary" class="outcome-summary">
+          <p class="eyebrow" id="last-panel-title">LAST TRIAL</p>
+          <div id="reward-conditioning-last-view">
+            <div id="last-summary" class="summary-line">No completed trial received</div>
+            <div id="last-trial" class="last-trial empty">No completed trial received</div>
+          </div>
+          <div id="spout-last-view" class="protocol-view" hidden>
+            <div id="spout-last-empty" class="summary-line">No completed reward</div>
+            <div id="spout-last-bait" class="metric-grid spout-last-details" hidden>
+              <div class="metric-row"><span>Bait</span><strong id="spout-last-bait-index">—</strong></div>
+              <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-bait-contact">—</strong></div>
+              <div class="metric-row"><span>First lick</span><strong id="spout-last-bait-latency">—</strong></div>
+            </div>
+            <div id="spout-last-reward" class="metric-grid spout-last-details" hidden>
+              <div class="metric-row"><span>Reward</span><strong id="spout-last-reward-index">—</strong></div>
+              <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-reward-contact">—</strong></div>
+              <div class="metric-row"><span>First lick latency</span><strong id="spout-last-reward-latency">—</strong></div>
+              <div class="metric-row"><span>Licks 0–0.5 s</span><strong id="spout-last-licks-05">—</strong></div>
+              <div class="metric-row"><span>Licks 0–1.0 s</span><strong id="spout-last-licks-10">—</strong></div>
+              <div class="metric-row"><span>Licks 0–2.5 s</span><strong id="spout-last-licks-25">—</strong></div>
+            </div>
           </div>
         </div>
-        <div id="spout-last-view" class="protocol-view" hidden>
-          <div id="spout-last-empty" class="summary-line">No completed bait reward</div>
-          <div id="spout-last-bait" class="spout-last-details" hidden>
-            <div class="metric-row"><span>Bait</span><strong id="spout-last-bait-index">—</strong></div>
-            <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-bait-contact">—</strong></div>
-            <div class="metric-row"><span>First lick</span><strong id="spout-last-bait-latency">—</strong></div>
-          </div>
-          <div id="spout-last-reward" class="spout-last-details" hidden>
-            <div class="metric-row"><span>Reward</span><strong id="spout-last-reward-index">—</strong></div>
-            <div class="metric-row"><span>Reward contacted</span><strong id="spout-last-reward-contact">—</strong></div>
-            <div class="metric-row"><span>First lick latency</span><strong id="spout-last-reward-latency">—</strong></div>
-            <div class="metric-row"><span>Licks 0–0.5 s</span><strong id="spout-last-licks-05">—</strong></div>
-            <div class="metric-row"><span>Licks 0–1.0 s</span><strong id="spout-last-licks-10">—</strong></div>
-            <div class="metric-row"><span>Licks 0–2.5 s</span><strong id="spout-last-licks-25">—</strong></div>
-          </div>
+      </article>
+
+      <article class="card lick-card">
+        <p class="eyebrow">LICK ACTIVITY · OBSERVATIONAL</p>
+        <div id="lick-aggregate-summary" class="lick-aggregate-summary" hidden></div>
+        <div id="natural-lick-feedback" class="lick-channels">
+          <div class="lick-channel"><strong>LEFT</strong><span id="lick-left-status">No telemetry</span><span>Contact: <b id="lick-left-contact">—</b></span><span>Recent onset: <b id="lick-left-onset">—</b></span><span>Licks last 2 s: <b id="lick-left-recent">—</b></span><span>Total: <b id="lick-left-total">—</b></span></div>
+          <div class="lick-channel"><strong>RIGHT</strong><span id="lick-right-status">No telemetry</span><span>Contact: <b id="lick-right-contact">—</b></span><span>Recent onset: <b id="lick-right-onset">—</b></span><span>Licks last 2 s: <b id="lick-right-recent">—</b></span><span>Total: <b id="lick-right-total">—</b></span></div>
         </div>
       </article>
     </section>
 
-    <section class="card history-card">
-      <div class="section-heading"><p class="eyebrow" id="history-title">RECENT TRIALS</p><span>Newest first · up to 20 shown</span></div>
-      <div class="table-wrap">
-        <table>
-          <thead id="reward-conditioning-history-head"><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
-          <thead id="partial-reversal-history-head" hidden><tr><th>Trial</th><th>Role</th><th>Current contingency</th><th>Reward</th><th>Anticipatory lick</th></tr></thead>
-          <thead id="spout-history-head" hidden><tr><th>Reward</th><th>Contacted</th><th>First lick</th><th>Licks 0–0.5 s</th><th>Licks 0–2.5 s</th></tr></thead>
-          <tbody id="history"><tr><td colspan="5" class="empty">No trial history</td></tr></tbody>
-        </table>
-      </div>
+    <section class="status-strip" aria-label="Hardware and integrity summary">
+      <article class="card strip-card"><p class="eyebrow">HARDWARE</p><div id="hardware-strip" class="strip-items"></div></article>
+      <article class="card strip-card"><p class="eyebrow">INTEGRITY</p><div id="integrity-strip" class="strip-items"></div></article>
+    </section>
+
+    <section class="diagnostics" aria-label="Diagnostics">
+      <details id="protocol-diagnostics" class="diagnostic-section">
+        <summary>Full protocol status</summary>
+        <div id="protocol-status" class="status-grid protocol-summary"><span class="empty">No protocol state received</span></div>
+        <pre id="protocol-raw" class="raw-status">No protocol state received</pre>
+      </details>
+      <details id="events-diagnostics" class="diagnostic-section">
+        <summary>Recent events</summary>
+        <div id="recent-events" class="event-list"><span class="empty">No events received</span></div>
+        <pre id="events-raw" class="raw-status">No events received</pre>
+      </details>
+      <details id="hardware-diagnostics" class="diagnostic-section">
+        <summary>Detailed hardware and integrity</summary>
+        <p class="eyebrow">HARDWARE</p><div id="hardware-status" class="status-grid"></div>
+        <pre id="hardware-raw" class="raw-status">No hardware status received</pre>
+        <p class="eyebrow diagnostic-subheading">INTEGRITY</p><div id="integrity-status" class="status-grid"></div>
+        <pre id="integrity-raw" class="raw-status">No integrity status received</pre>
+      </details>
+      <details id="history-diagnostics" class="diagnostic-section">
+        <summary>Trial history and lick timeline</summary>
+        <div class="section-heading"><p class="eyebrow" id="history-title">RECENT TRIALS</p><span>Newest first · up to 20 shown</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead id="reward-conditioning-history-head"><tr><th>Trial</th><th>Role</th><th>Reward</th><th>Omission</th><th>Anticipatory lick</th></tr></thead>
+            <thead id="partial-reversal-history-head" hidden><tr><th>Trial</th><th>Role</th><th>Current contingency</th><th>Reward</th><th>Anticipatory lick</th></tr></thead>
+            <thead id="spout-history-head" hidden><tr><th>Reward</th><th>Contacted</th><th>First lick</th><th>Licks 0–0.5 s</th><th>Licks 0–2.5 s</th></tr></thead>
+            <tbody id="history"><tr><td colspan="5" class="empty">No trial history</td></tr></tbody>
+          </table>
+        </div>
+        <div class="lick-timeline-section">
+          <div class="lick-timeline-label">LICK TIMELINE · LAST COMPLETED TRIAL</div>
+          <svg id="lick-timeline" viewBox="0 0 600 195" role="img" aria-label="Last-trial lick timeline"></svg>
+        </div>
+      </details>
     </section>
     <footer>Telemetry is observational and may be lost. The experiment engine remains the sole owner of hardware, timing, and scientific event logging.</footer>
   </main>

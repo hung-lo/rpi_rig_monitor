@@ -120,6 +120,7 @@ class MonitorState(object):
         self.history_limit = history_limit
         self._lock = RLock()
         self._last_received: Optional[float] = None
+        self._lick_aggregate_available = False
         self._data: Dict[str, Any] = {
             "protocol": None,
             "session_id": None,
@@ -164,6 +165,7 @@ class MonitorState(object):
                 session_id = generic_session.get("id")
             if (session_id is not None and self._data["session_id"] is not None
                     and session_id != self._data["session_id"]):
+                self._lick_aggregate_available = False
                 self._recent.clear()
                 self._recent_events.clear()
                 for key in ("protocol", "phase", "trial", "total_trials", "block", "total_blocks",
@@ -230,6 +232,10 @@ class MonitorState(object):
             if message_type in ("event", "trial_complete"):
                 self._recent_events.appendleft(copy.deepcopy(packet))
 
+            if any(key in packet for key in ("licking_active", "last_lick_age_sec",
+                                             "recent_lick_count_2s", "total_lick_onset_count_session")):
+                self._lick_aggregate_available = True
+
             for key in ("protocol", "protocol_version", "session_id", "phase", "contingency_phase",
                         "trial", "total_trials", "block", "total_blocks", "image",
                         "stimulus_role", "eta_sec"):
@@ -262,6 +268,7 @@ class MonitorState(object):
             age = None if self._last_received is None else max(0.0, current_time - self._last_received)
             connected = age is not None and age <= self.stale_after_sec
             result = copy.deepcopy(self._data)
+            result["lick_aggregate_available"] = self._lick_aggregate_available
             result["rig"] = copy.deepcopy(self._generic)
             result["recent_events"] = list(self._recent_events)
             freshness = "FRESH" if connected else "STALE" if age is not None else "NONE"

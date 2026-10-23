@@ -14,6 +14,12 @@
   }
   function addCell(row, value, className) { var cell = document.createElement("td"); cell.textContent = text(value); if (className) cell.className = className; row.appendChild(cell); }
   function finiteNumber(value) { return typeof value === "number" && isFinite(value); }
+  function lifecycleState(data) {
+    var supervisor = data.supervisor || {}, rigSession = data.rig && data.rig.session || {};
+    if (supervisor.state && supervisor.session_id &&
+        (!data.session_id || supervisor.session_id === data.session_id)) return String(supervisor.state).toUpperCase();
+    return String(rigSession.state || "").toUpperCase();
+  }
   function formatFraction(numerator, denominator) {
     if (!finiteNumber(numerator) || !finiteNumber(denominator)) return "—";
     if (denominator === 0) return "0 / 0 (—)";
@@ -114,24 +120,24 @@
   }
   function renderNaturalStimulus(data, isNatural) {
     setHidden("natural-stimulus-details", !isNatural);
-    setHidden("natural-lick-feedback", !isNatural);
     if (!isNatural) { requestedNaturalImage = null; return; }
-    var current = data.stimulus_state, rigSession = data.rig && data.rig.session || {};
-    var sessionState = String(rigSession.state || "").toUpperCase();
+    var current = data.stimulus_state;
+    var sessionState = lifecycleState(data);
     var terminal = ["COMPLETE", "ERROR", "ABORTED"].indexOf(sessionState) >= 0;
     var fresh = data.telemetry_freshness === "FRESH";
     var age = finiteNumber(data.last_packet_age_sec) ? " · " + formatSeconds(data.last_packet_age_sec) + " ago" : "";
-    $("stimulus-freshness").textContent = fresh ? "FRESH" + age : (data.telemetry_freshness === "NONE" ? "UNKNOWN · no telemetry" : "STALE / UNKNOWN");
-    if (!fresh) {
-      $("image").textContent = "—"; $("stimulus-role").textContent = "UNKNOWN";
-      $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
-      clearNaturalPreview("STALE / UNKNOWN", "stale");
-      return;
-    }
+    $("stimulus-freshness").textContent = terminal ? "SESSION ENDED" :
+      (fresh ? "FRESH" + age : (data.telemetry_freshness === "NONE" ? "UNKNOWN · no telemetry" : "STALE / UNKNOWN"));
     if (terminal) {
       $("image").textContent = "—"; $("stimulus-role").textContent = "Session ended";
       $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
       clearNaturalPreview("Session ended", "gray");
+      return;
+    }
+    if (!fresh) {
+      $("image").textContent = "—"; $("stimulus-role").textContent = "UNKNOWN";
+      $("stimulus-filename").textContent = "—"; $("stimulus-sequence").textContent = "—";
+      clearNaturalPreview("STALE / UNKNOWN", "stale");
       return;
     }
     if (!current || typeof current !== "object") {
@@ -162,25 +168,40 @@
     $("preview-image").parentNode.classList.remove("gray", "stale");
     setNaturalPreview(data.session_id, filename);
   }
-  function renderNaturalLicks(data) {
+  function renderLickActivity(data) {
     var licks = data.lick_state, fresh = data.telemetry_freshness === "FRESH";
-    var sessionState = String(data.rig && data.rig.session && data.rig.session.state || "").toUpperCase();
+    var sessionState = lifecycleState(data);
     var ended = ["COMPLETE", "ERROR", "ABORTED"].indexOf(sessionState) >= 0;
+    var channels = licks && licks.channels;
+    var hasChannels = channels && (channels.left || channels.right);
+    var aggregate = $("lick-aggregate-summary");
+    var hasAggregate = data.lick_aggregate_available === true;
+    if (hasAggregate && !hasChannels) {
+      aggregate.hidden = false;
+      aggregate.textContent = "Aggregate only · last 2 s: " + formatInteger(data.recent_lick_count_2s) +
+        (!fresh ? " (stale)" : "") + " · session total: " + formatInteger(data.total_lick_onset_count_session) +
+        (!fresh ? " (stale)" : "");
+    } else {
+      aggregate.hidden = true;
+      aggregate.textContent = "";
+    }
     ["left", "right"].forEach(function (name) {
-      var channel = licks && licks.channels && licks.channels[name];
+      var channel = channels && channels[name];
       var status = channel && channel.status;
       var available = channel && channel.available === true;
       var onset = $("lick-" + name + "-onset");
       var recent = available && status === "available" && fresh && !ended &&
         finiteNumber(channel.last_lick_age_sec) && channel.last_lick_age_sec >= 0 &&
         channel.last_lick_age_sec <= 1.5;
-      var label = status === "not_requested" ? "GPIO not requested" :
+      var label = ended ? "Session ended" : !fresh ? (data.telemetry_freshness === "NONE" ? "No telemetry" : "STALE") :
+        status === "not_requested" ? "GPIO not requested" :
         status === "not_configured" ? "Not configured" :
         status === "session_ended" || ended ? "Session ended" :
-        available ? (fresh ? "Available" : "STALE") : "Not available";
+        available ? "Available" : (hasAggregate ? "Channel data unavailable" : "Not available");
       $("lick-" + name + "-status").textContent = label;
       if (!available || !fresh || ended) {
-        $("lick-" + name + "-contact").textContent = !fresh ? "Unknown (stale)" : "—";
+        $("lick-" + name + "-contact").textContent = ended ? "—" : !fresh ?
+          (data.telemetry_freshness === "NONE" ? "Unknown" : "Unknown (stale)") : "—";
         onset.textContent = "—";
       } else {
         $("lick-" + name + "-contact").textContent = channel.contact_active === true ? "Active" :
@@ -256,6 +277,9 @@
     $("new-reward-volume").textContent = formatWater(data.reward_volume_ul_per_train, false);
   }
   function renderSpoutBehavior(data, isBaitView) {
+    var fresh = data.telemetry_freshness === "FRESH";
+    var sessionState = lifecycleState(data);
+    var ended = ["COMPLETE", "ERROR", "ABORTED"].indexOf(sessionState) >= 0;
     $("spout-phase").textContent = text(data.phase);
     $("spout-reward-progress").textContent = spoutRewardProgress(data);
     $("spout-next-reward").textContent = isBaitView || data.phase === "COMPLETE" ? "—" : formatSeconds(data.next_reward_in_sec);
@@ -271,15 +295,19 @@
     $("spout-bait-water").textContent = formatWater(data.bait_water_ul_session, false);
     $("spout-total-water").textContent = formatWater(data.total_water_ul_session, false);
     $("spout-reward-volume").textContent = formatWater(data.reward_volume_ul, false);
-    $("spout-total-licks").textContent = formatInteger(data.total_lick_onset_count_session);
+    $("spout-total-licks").textContent = data.lick_aggregate_available === true ?
+      formatInteger(data.total_lick_onset_count_session) + (!fresh ? " (stale)" : "") : "—";
     var baitDenominator = data.completed_bait_reward_count;
     $("spout-bait-drops").textContent = finiteNumber(data.bait_total) ? formatInteger(data.completed_bait_reward_count) + " / " + data.bait_total : formatInteger(data.completed_bait_reward_count);
     $("spout-bait-contact").textContent = formatSpoutFraction(data.bait_contacted_count_session, baitDenominator);
     $("spout-manual-bait-water").textContent = formatWater(data.bait_water_ul_session, false);
-    $("spout-recent-licks").textContent = formatInteger(data.recent_lick_count_2s);
-    $("spout-last-lick").textContent = formatAge(data.last_lick_age_sec);
-    $("spout-lick-status").textContent = data.licking_active === true ? "LICKING" : "quiet";
-    $("spout-lick-status").className = data.licking_active === true ? "licking" : "quiet";
+    var hasLicks = data.lick_aggregate_available === true;
+    $("spout-recent-licks").textContent = hasLicks ? formatInteger(data.recent_lick_count_2s) + (!fresh ? " (stale)" : "") : "—";
+    var lastLickAge = formatAge(data.last_lick_age_sec);
+    $("spout-last-lick").textContent = hasLicks ? lastLickAge + (!fresh && finiteNumber(data.last_lick_age_sec) ? " (stale)" : "") : "—";
+    var licking = fresh && !ended && data.licking_active === true;
+    $("spout-lick-status").textContent = !hasLicks ? "Not available" : ended ? "Session ended" : !fresh ? "STALE" : licking ? "LICKING" : "quiet";
+    $("spout-lick-status").className = licking ? "licking" : "quiet";
     $("spout-training-status").textContent = data.manual_start_requested === true ? "Starting after bait cycle" : data.phase === "MANUAL_START_DELAY" ? "Starting" : "Waiting for operator";
   }
   function spoutContact(value) { return value === true ? "YES" : value === false ? "NO" : "—"; }
@@ -333,24 +361,32 @@
     return condition + " + " + (trial.reward_scheduled === false ? (trial.anticipatory_lick ? "lick" : "no lick") : (trial.anticipatory_lick ? "anticipatory lick" : "no anticipatory lick"));
   }
   function render(data) {
-    var isSpout = data.protocol === "spout_training";
-    var isNewProtocol = data.protocol === "exposure_reward_partial_reversal_v1" || data.protocol_version === "exposure_reward_partial_reversal_v1" || data.new_reward_protocol_behavior_available === true;
-    var isNatural = data.protocol === "natural-images" || data.protocol === "natural_images";
+    var supervisor = data.supervisor || {}, rigSession = data.rig && data.rig.session || {};
+    var supervisorMatches = supervisor.session_id && (!data.session_id || supervisor.session_id === data.session_id);
+    var activeProtocol = supervisorMatches ? (supervisor.protocol_id || supervisor.protocol || data.protocol || rigSession.protocol) :
+      (data.protocol || rigSession.protocol);
+    var isSpout = activeProtocol === "spout_training";
+    var isNewProtocol = activeProtocol === "exposure_reward_partial_reversal_v1" || data.protocol_version === "exposure_reward_partial_reversal_v1" || data.new_reward_protocol_behavior_available === true;
+    var isNatural = activeProtocol === "natural-images" || activeProtocol === "natural_images";
+    var isLegacyReward = activeProtocol === "reward_conditioning";
     var isBaitPhase = data.phase === "MANUAL_BAIT" || data.phase === "MANUAL_START_DELAY";
     var isBaitView = isSpout && (isBaitPhase || (!data.phase && data.manual_bait_active === true));
     $("session-id").textContent = text(data.session_id); $("protocol").textContent = text(data.protocol);
     $("contingency-phase").textContent = text(data.contingency_phase);
     renderNaturalStimulus(data, isNatural);
-    if (isNatural) renderNaturalLicks(data);
+    renderLickActivity(data);
     $("connection").className = "status " + (data.connected ? "live" : "stale"); $("connection").lastElementChild.textContent = data.status || "STALE";
     setHidden("reward-conditioning-session-view", isSpout); setHidden("spout-session-view", !isSpout);
     setHidden("reward-conditioning-last-view", isSpout); setHidden("spout-last-view", !isSpout);
-    setHidden("legacy-behavior-view", isSpout || isNewProtocol || isNatural); setHidden("partial-reversal-behavior-view", isSpout || isNatural || !isNewProtocol);
+    setHidden("outcome-summary", isNatural);
+    setHidden("legacy-behavior-view", isSpout || isNewProtocol || isNatural || !isLegacyReward);
+    setHidden("partial-reversal-behavior-view", isSpout || isNatural || !isNewProtocol);
     if (isSpout) {
       setHidden("spout-behavior-scheduled", isBaitView);
       setHidden("spout-behavior-manual", !isBaitView);
     }
-    $("session-title").textContent = isSpout ? "SPOUT TRAINING" : "SESSION";
+    $("session-title").textContent = isSpout ? "SPOUT TRAINING" : isNatural ? "NATURAL IMAGE SEQUENCE" :
+      isNewProtocol ? "PARTIAL REVERSAL" : isLegacyReward ? "REWARD CONDITIONING" : "TASK / TRIAL";
     $("last-panel-title").textContent = isSpout ? (isBaitView ? "LAST BAIT" : "LAST REWARD") : "LAST TRIAL";
     if (isSpout) {
       $("image").textContent = "—"; $("stimulus-role").textContent = "—"; setPreview(null);
@@ -358,9 +394,11 @@
     } else if (isNatural) {
       var stimulus = data.stimulus_state || {};
       $("phase").textContent = text(stimulus.phase);
-      $("trial").textContent = stimulus.sequence_index == null ? "—" : text(stimulus.sequence_index);
+      var sequenceTotal = finiteNumber(stimulus.sequence_total) ? stimulus.sequence_total : data.total_trials;
+      $("trial").textContent = stimulus.sequence_index == null ? "—" : text(stimulus.sequence_index) +
+        (sequenceTotal == null ? "" : " / " + sequenceTotal);
       $("block").textContent = "—"; $("eta").textContent = formatEta(data.eta_sec);
-      $("phase-contingency").textContent = "—";
+      $("phase-contingency").textContent = text(data.contingency_phase || stimulus.condition || stimulus.stimulus_role);
       renderLickTimeline(null);
     } else {
       $("image").textContent = text(data.image); $("stimulus-role").textContent = text(data.stimulus_role); setPreview(data.image);
@@ -390,7 +428,29 @@
   var integrityLabels = { event_drops: "Event drops", writer_errors: "Writer errors", kms_completed: "KMS completed", kms_long_intervals: "KMS long intervals", camera_errors: "Camera errors" };
   function addStatus(parent, label, value) {
     var item = document.createElement("div"), name = document.createElement("span"), content = document.createElement("strong");
-    name.textContent = label; content.textContent = text(value); item.appendChild(name); item.appendChild(content); parent.appendChild(item);
+    name.textContent = label; content.textContent = statusValue(value); item.appendChild(name); item.appendChild(content); parent.appendChild(item);
+  }
+  function renderHardwareStatus(parent, values, compact) {
+    clear(parent);
+    var labels = compact ? { display: "Display", camera_1: "Camera 1", camera_2: "Camera 2",
+      storage: "Storage", gpio: "GPIO" } : hardwareLabels;
+    Object.keys(labels).forEach(function (key) {
+      if ((key === "camera_1" || key === "camera_2") && Array.isArray(values.cameras) && values.cameras.length) return;
+      addStatus(parent, labels[key], values[key]);
+    });
+    (values.cameras || []).forEach(function (camera, index) {
+      if (!camera || typeof camera !== "object") return;
+      var cameraId = camera.camera_id || camera.id || camera.role || "Camera " + (index + 1);
+      var label = camera.role && camera.role !== cameraId ? cameraId + " (" + camera.role + ")" : cameraId;
+      addStatus(parent, label, camera.state || "unknown");
+    });
+  }
+  function renderIntegrityStatus(parent, values, compact) {
+    clear(parent);
+    Object.keys(integrityLabels).forEach(function (key) {
+      if (compact && ["event_drops", "writer_errors", "camera_errors"].indexOf(key) < 0) return;
+      addStatus(parent, integrityLabels[key], values[key]);
+    });
   }
   function statusValue(value) {
     if (value === null || value === undefined) return "—";
@@ -465,8 +525,14 @@
       !!protocolChoice && protocolChoice.available === true && !!presetChoice && presetChoice.available === true &&
       runtimeFieldsValid();
     $("operator-state").textContent = state || "IDLE";
+    var stateNode = $("operator-state"), stateText = String(state || "IDLE").toUpperCase();
+    stateNode.className = "state-pill" + (stateText.indexOf("ERROR") >= 0 || stateText.indexOf("ABORTED") >= 0 ? " state-error" :
+      stateText.indexOf("RUNNING") >= 0 ? " state-running" : stateText.indexOf("READY") >= 0 ? " state-ready" : "");
     $("operator-session-id").textContent = text(sessionId || "No session");
     $("operator-protocol").textContent = text(protocol);
+    $("operator-subject").textContent = text(managed ? supervisor.subject_id : session.subject_id);
+    $("operator-session-id").title = text(sessionId || "No session");
+    $("operator-protocol").title = text(protocol);
     $("operator-elapsed").textContent = finiteNumber(elapsed) ? formatEta(elapsed) : "—";
     $("operator-eta").textContent = finiteNumber(eta) ? formatEta(eta) : "—";
     $("supervisor-connection").className = "status " + (supervisor.available ? "live" : "stale");
@@ -492,25 +558,25 @@
     else if (supervisor.process_running === true && terminal) $("control-help").textContent = "The previous experiment process has not exited. New launches are blocked.";
     else $("control-help").textContent = "Commands are acknowledged by the supervisor and validated by the experiment process.";
 
-    var hardware = $("hardware-status"), hardwareValues = rig.hardware || {}; clear(hardware);
-    Object.keys(hardwareLabels).forEach(function (key) {
-      if ((key === "camera_1" || key === "camera_2") && Array.isArray(hardwareValues.cameras) && hardwareValues.cameras.length) return;
-      addStatus(hardware, hardwareLabels[key], hardwareValues[key]);
-    });
-    (hardwareValues.cameras || []).forEach(function (camera, index) {
-      if (!camera || typeof camera !== "object") return;
-      var cameraId = camera.camera_id || camera.id || camera.role || "Camera " + (index + 1);
-      var label = camera.role && camera.role !== cameraId ? cameraId + " (" + camera.role + ")" : cameraId;
-      addStatus(hardware, label, camera.state || "unknown");
-    });
-    var integrity = $("integrity-status"); clear(integrity);
-    Object.keys(integrityLabels).forEach(function (key) { addStatus(integrity, integrityLabels[key], (rig.integrity || {})[key]); });
+    var hardwareValues = rig.hardware || {};
+    renderHardwareStatus($("hardware-status"), hardwareValues, false);
+    renderHardwareStatus($("hardware-strip"), hardwareValues, true);
+    renderIntegrityStatus($("integrity-status"), rig.integrity || {}, false);
+    renderIntegrityStatus($("integrity-strip"), rig.integrity || {}, true);
+    $("hardware-raw").textContent = Object.keys(hardwareValues).length ? JSON.stringify(hardwareValues, null, 2) : "No hardware status received";
+    $("integrity-raw").textContent = Object.keys(rig.integrity || {}).length ? JSON.stringify(rig.integrity, null, 2) : "No integrity status received";
     var protocolNode = $("protocol-status"); clear(protocolNode);
     var protocolState = rig.protocol || {}, protocolKeys = Object.keys(protocolState);
-    if (!protocolKeys.length) { var emptyProtocol = document.createElement("span"); emptyProtocol.className = "empty"; emptyProtocol.textContent = "No protocol state received"; protocolNode.appendChild(emptyProtocol); }
-    protocolKeys.slice(0, 12).forEach(function (key) { addStatus(protocolNode, key.replace(/_/g, " "), statusValue(protocolState[key])); });
+    var summaryKeys = protocolKeys.filter(function (key) {
+      return ["state", "phase", "trial", "total_trials", "block", "total_blocks", "image",
+        "stimulus_role", "stimulus_kind", "sequence_index"].indexOf(key) >= 0;
+    });
+    if (!summaryKeys.length) { var emptyProtocol = document.createElement("span"); emptyProtocol.className = "empty"; emptyProtocol.textContent = protocolKeys.length ? "No summary fields · see raw details" : "No protocol state received"; protocolNode.appendChild(emptyProtocol); }
+    summaryKeys.forEach(function (key) { addStatus(protocolNode, key.replace(/_/g, " "), protocolState[key]); });
+    $("protocol-raw").textContent = protocolKeys.length ? JSON.stringify(protocolState, null, 2) : "No protocol state received";
     var eventsNode = $("recent-events"); clear(eventsNode);
     var events = (supervisor.recent_events || []).concat(data.recent_events || []).slice(0, 12);
+    $("events-raw").textContent = events.length ? JSON.stringify(events, null, 2) : "No events received";
     if (!events.length) { var emptyEvents = document.createElement("span"); emptyEvents.className = "empty"; emptyEvents.textContent = "No events received"; eventsNode.appendChild(emptyEvents); }
     events.forEach(function (item) {
       var row = document.createElement("div"), label = document.createElement("strong"), detail = document.createElement("span");
