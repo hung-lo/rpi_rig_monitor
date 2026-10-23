@@ -531,7 +531,11 @@ class SupervisorServer:
         if not isinstance(parameters, dict):
             raise SupervisorError("session parameters must be an object")
         try:
-            resolved_parameters = self.registry.validate_parameters(protocol_id, preset_id, parameters)
+            parameter_values = dict(profile_parameters)
+            parameter_values.update(parameters)
+            resolved_parameters = self.registry.validate_parameters(
+                protocol_id, preset_id, parameter_values
+            )
         except RegistryError as exc:
             raise SupervisorError(str(exc))
         self._refresh()

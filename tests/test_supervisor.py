@@ -546,6 +546,16 @@ finally:
                                                "parameters": {"image_count": 10}})
         self.assertTrue(stored_profile["ok"], stored_profile.get("error"))
         saved_profile = stored_profile["result"]
+        for invalid_parameters, message in (
+                ({"image_count": 0}, "outside the supported range"),
+                ({"unsupported": 1}, "unsupported session parameter")):
+            invalid = self._response(
+                "prepare", "external_fixture", preset_id="short_validation",
+                parameters=invalid_parameters,
+                profile_ref={"profile_id": saved_profile["profile_id"], "version": 1},
+            )
+            self.assertFalse(invalid["ok"])
+            self.assertIn(message, invalid["error"])
         ready = self._control("prepare", "external_fixture", preset_id="short_validation",
                               fields={"subject_id": "Fucci-Tri_7"},
                               parameters={"image_count": 12},
@@ -613,6 +623,53 @@ finally:
         self.assertEqual(complete["exit_status"], 0)
         self.assertTrue(Path(complete["stdout_path"]).is_file())
         self.assertIn("external fixture ready subject=Fucci-Tri_7", Path(complete["stdout_path"]).read_text())
+        deadline = time.monotonic() + 3
+        while self._status().get("process_running") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(self._status()["process_running"])
+
+        registry_file.write_text(json.dumps({"schema_version": 1, "protocols": [definition]}))
+        self._restart_supervisor(registry_file=registry_file)
+        profile_only = self._control(
+            "prepare", "external_fixture", preset_id="short_validation",
+            fields={"subject_id": "Fucci-Tri_7"},
+            profile_ref={"profile_id": saved_profile["profile_id"], "version": 2},
+        )
+        self.assertEqual(profile_only["parameters"], {"image_count": 20})
+        self.assertEqual(profile_only["parameter_overrides"], {})
+        self.assertEqual(profile_only["profile_identity"]["version"], 2)
+        image_count_index = profile_only["command"].index("--image-count")
+        self.assertEqual(profile_only["command"][image_count_index + 1], "20")
+        metadata = json.loads(Path(profile_only["session_metadata_path"]).read_text())
+        self.assertEqual(metadata["parameters"], {"image_count": 20})
+        self.assertEqual(metadata["parameter_overrides"], {})
+
+        updated_profile = self.client.request({"command": "profiles", "action": "update",
+                                               "protocol_id": "external_fixture",
+                                               "preset_id": "short_validation",
+                                               "profile_id": saved_profile["profile_id"],
+                                               "version": 2, "name": "Next sessions",
+                                               "parameters": {"image_count": 30}})
+        self.assertTrue(updated_profile["ok"], updated_profile.get("error"))
+        unchanged = self._status()
+        self.assertEqual(unchanged["parameters"], {"image_count": 20})
+        self.assertEqual(unchanged["profile_identity"]["version"], 2)
+        self.assertEqual(json.loads(Path(unchanged["session_metadata_path"]).read_text())[
+            "parameters"], {"image_count": 20})
+        self._control("abort")
+        self._wait_for("ABORTED")
+        deadline = time.monotonic() + 3
+        while self._status().get("process_running") and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(self._status()["process_running"])
+
+        explicit = self._control("prepare", "external_fixture", preset_id="short_validation",
+                                 fields={"subject_id": "Fucci-Tri_7"},
+                                 parameters={"image_count": 15})
+        self.assertEqual(explicit["parameters"], {"image_count": 15})
+        self.assertEqual(explicit["parameter_overrides"], {"image_count": 15})
+        self.assertIsNone(explicit["profile_identity"])
+        self._control("abort")
 
     def test_unavailable_external_protocol_is_listed_but_cannot_launch(self):
         missing_executable = str(self.state_dir / "not-installed-task")

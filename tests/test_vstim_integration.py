@@ -325,6 +325,8 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert snapshot["preset_id"] == "operator_simulation"
             assert snapshot["engine_protocol_id"] == "natural-images"
             assert snapshot["engine_session_id"] == snapshot["session_id"]
+            assert snapshot["parameters"] == {"image_count": 5}
+            assert snapshot["parameter_overrides"] == {}
             assert snapshot["adapter_type"] == "unix_json_v1"
             assert snapshot["control_schema_version"] == 1
             assert snapshot["subject_id"] == "example_mouse"
@@ -634,23 +636,22 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert not Path(after_abort["control_endpoint"]).exists()
             assert control("abort", "real-abort-running-1")["ack"] == running_abort["ack"]
 
-            # A short profiled simulation also reaches an engine-authored COMPLETE naturally.
+            # Profile-only PREPARE uses the saved image count for a real VStim simulation.
             registry_path.write_text(good_registry)
             client = restart_supervisor()
             profile_status, saved_profile = _http(
                 web_port, "/api/profiles",
                 {"action": "save", "protocol_id": "natural_images",
-                 "preset_id": "operator_simulation", "name": "Five image base",
-                 "parameters": {"image_count": 5}}, token,
+                 "preset_id": "operator_simulation", "name": "Four image profile",
+                 "parameters": {"image_count": 4}}, token,
             )
             assert profile_status == 200
             natural_task = control("prepare", "natural-completion-prepare", protocol_id="natural_images",
                                    preset_id="operator_simulation", fields={"subject_id": "example_mouse"},
-                                   parameters={"image_count": 4},
                                    profile_ref={"profile_id": saved_profile["profile_id"], "version": 1})
             assert_new_control_state_path(natural_task)
             assert natural_task["parameters"] == {"image_count": 4}
-            assert natural_task["parameter_overrides"] == {"image_count": 4}
+            assert natural_task["parameter_overrides"] == {}
             assert natural_task["profile_identity"]["version"] == 1
             assert "--image-count" in natural_task["command"]
             assert natural_task["command"][natural_task["command"].index("--image-count") + 1] == "4"
@@ -673,7 +674,7 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert monitor_configuration["profile"]["profile_id"] == saved_profile["profile_id"]
             assert monitor_configuration["profile"]["version"] == 1
             assert monitor_configuration["parameters"] == {"image_count": 4}
-            assert monitor_configuration["parameter_overrides"] == {"image_count": 4}
+            assert monitor_configuration["parameter_overrides"] == {}
             assert manifest["monitor_session_configuration"] == monitor_configuration
             assert resolved_config["protocol"]["parameters"]["image_count"] == 4
             assert len(plan["metadata"]["selected_images"]) == 4
