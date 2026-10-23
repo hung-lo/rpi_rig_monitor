@@ -92,15 +92,22 @@ class SupervisorTests(unittest.TestCase):
         except (OSError, ValueError, TypeError):
             pass
 
-    def _response(self, action, protocol=None, request_id=None, preset_id="standard", fields=None):
+    def _response(self, action, protocol=None, request_id=None, preset_id="standard", fields=None,
+                  parameters=None, profile_ref=None):
         request = {"command": "control", "action": action, "request_id": request_id or uuid.uuid4().hex}
         if action == "prepare":
             request.update({"protocol_id": protocol or "fake", "preset_id": preset_id,
                             "fields": fields or {"subject_id": "example_mouse"}})
+            if parameters is not None:
+                request["parameters"] = parameters
+            if profile_ref is not None:
+                request["profile_ref"] = profile_ref
         return self.client.request(request)
 
-    def _control(self, action, protocol=None, preset_id="standard", fields=None):
-        response = self._response(action, protocol, preset_id=preset_id, fields=fields)
+    def _control(self, action, protocol=None, preset_id="standard", fields=None,
+                 parameters=None, profile_ref=None):
+        response = self._response(action, protocol, preset_id=preset_id, fields=fields,
+                                  parameters=parameters, profile_ref=profile_ref)
         self.assertTrue(response.get("ok"), response.get("error"))
         return response.get("result")
 
@@ -440,6 +447,8 @@ parser.add_argument("--subject-id", required=True)
 parser.add_argument("--control-socket", required=True)
 parser.add_argument("--session-id", required=True)
 parser.add_argument("--telemetry-port", type=int, required=True)
+parser.add_argument("--image-count", type=int, required=True)
+parser.add_argument("--session-metadata", required=True)
 args = parser.parse_args()
 state = "READY"
 started = None
@@ -519,15 +528,28 @@ finally:
             "working_directory": str(self.state_dir),
             "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
                                 "required": True, "type": "subject_id", "cli_flag": "--subject-id"}],
+            "parameters": [{"name": "image_count", "display_name": "Image count",
+                            "type": "integer", "default": 5, "minimum": 1, "maximum": 2800,
+                            "units": "images", "description": "Images in the session.",
+                            "cli_flag": "--image-count"}],
+            "session_metadata_flag": "--session-metadata",
             "presets": [{"preset_id": "short_validation", "display_name": "Short validation",
                          "description": "Test fixture preset", "arguments": ["--profile", "short"],
-                         "required_files": [str(config)]}],
+                         "required_files": [str(config)], "parameter_defaults": {"image_count": 5}}],
         }
         registry_file.write_text(json.dumps({"schema_version": 1, "protocols": [definition]}))
         self._restart_supervisor(registry_file=registry_file)
 
+        stored_profile = self.client.request({"command": "profiles", "action": "save",
+                                               "protocol_id": "external_fixture",
+                                               "preset_id": "short_validation", "name": "Ten images",
+                                               "parameters": {"image_count": 10}})
+        self.assertTrue(stored_profile["ok"], stored_profile.get("error"))
+        saved_profile = stored_profile["result"]
         ready = self._control("prepare", "external_fixture", preset_id="short_validation",
-                              fields={"subject_id": "Fucci-Tri_7"})
+                              fields={"subject_id": "Fucci-Tri_7"},
+                              parameters={"image_count": 12},
+                              profile_ref={"profile_id": saved_profile["profile_id"], "version": 1})
         self.assertEqual(ready["state"], "READY")
         self.assertEqual(ready["protocol_id"], "external_fixture")
         self.assertEqual(ready["engine_protocol_id"], "external-native")
@@ -540,9 +562,31 @@ finally:
         self.assertIn("--subject-id", ready["command"])
         self.assertIn("Fucci-Tri_7", ready["command"])
         self.assertEqual(ready["launch_metadata"]["runtime_fields"], {"subject_id": "Fucci-Tri_7"})
+        self.assertEqual(ready["parameters"], {"image_count": 12})
+        self.assertEqual(ready["profile_identity"]["version"], 1)
+        self.assertEqual(ready["parameter_overrides"], {"image_count": 12})
+        self.assertIn("--image-count", ready["command"])
+        self.assertIn("12", ready["command"])
+        self.assertEqual(Path(ready["session_metadata_path"]).stat().st_mode & 0o777, 0o600)
+        metadata = json.loads(Path(ready["session_metadata_path"]).read_text())
+        self.assertEqual(metadata["parameters"], {"image_count": 12})
+        self.assertEqual(metadata["profile"]["profile_id"], saved_profile["profile_id"])
         script_pid = ready["pid"]
         self._control("start")
         self.assertEqual(self._wait_for("RUNNING")["pid"], script_pid)
+
+        profile_update = self.client.request({"command": "profiles", "action": "update",
+                                              "protocol_id": "external_fixture",
+                                              "preset_id": "short_validation",
+                                              "profile_id": saved_profile["profile_id"],
+                                              "version": 1, "name": "Changed future sessions",
+                                              "parameters": {"image_count": 20}})
+        self.assertTrue(profile_update["ok"], profile_update.get("error"))
+        active_before_restart = self._status()
+        self.assertEqual(active_before_restart["parameters"], {"image_count": 12})
+        self.assertEqual(active_before_restart["profile_identity"]["version"], 1)
+        self.assertEqual(json.loads(Path(active_before_restart["session_metadata_path"]).read_text())[
+            "parameters"], {"image_count": 12})
 
         # Remove the running protocol from the new registry; adoption uses saved launch identity.
         registry_file.write_text(json.dumps({"schema_version": 1, "protocols": []}))
@@ -554,6 +598,9 @@ finally:
         self.assertEqual(adopted["protocol_id"], "external_fixture")
         self.assertEqual(adopted["preset_id"], "short_validation")
         self.assertEqual(adopted["command"], ready["command"])
+        self.assertEqual(adopted["parameters"], {"image_count": 12})
+        self.assertEqual(adopted["profile_identity"], ready["profile_identity"])
+        self.assertEqual(adopted["session_metadata_path"], ready["session_metadata_path"])
         app = create_app(MonitorState(), supervisor=self.client)
         client = app.test_client()
         app_status = client.get("/api/state").get_json()

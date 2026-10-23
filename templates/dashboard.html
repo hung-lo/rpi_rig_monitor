@@ -43,11 +43,32 @@
           <input id="control-token" type="password" autocomplete="off" aria-describedby="control-help">
         </div>
       </details>
+      <details id="session-settings" class="session-settings">
+        <summary>Session Settings <span id="settings-dirty" class="settings-dirty">Defaults</span></summary>
+        <p class="settings-future-note">These values apply to a future session only. A prepared session keeps its resolved settings.</p>
+        <div id="parameter-fields" class="parameter-fields"></div>
+        <div class="profile-controls">
+          <label for="session-profile-select">Saved profile</label>
+          <select id="session-profile-select"><option value="">Protocol defaults</option></select>
+          <label for="profile-name">Profile name</label>
+          <input id="profile-name" type="text" maxlength="64" autocomplete="off">
+          <button id="profile-save-button" type="button" disabled>Save as new</button>
+          <button id="profile-update-button" type="button" disabled>Update profile</button>
+          <button id="profile-delete-button" class="danger" type="button" disabled>Delete profile</button>
+          <button id="settings-defaults-button" type="button">Return to defaults</button>
+        </div>
+        <p id="profile-message" class="control-message" role="status" aria-live="polite"></p>
+        <div class="resolved-settings"><strong>Resolved settings</strong><span id="resolved-settings-summary">No editable settings for this preset.</span></div>
+      </details>
       <div class="controls-row">
         <button id="prepare-button" type="button" disabled>Prepare</button>
         <button id="start-button" type="button" disabled>Start task</button>
         <button id="stop-button" type="button" disabled>Stop</button>
         <button id="abort-button" class="danger" type="button" disabled>Abort</button>
+      </div>
+      <div id="manual-bait-area" class="manual-bait-area">
+        <strong>Manual Bait</strong>
+        <span id="manual-bait-explanation">Manual bait is unavailable until the active engine advertises a calibrated reward action.</span>
         <button id="bait-left-button" type="button" hidden disabled>Bait left</button>
         <button id="bait-right-button" type="button" hidden disabled>Bait right</button>
       </div>

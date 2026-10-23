@@ -237,15 +237,61 @@ verifies the status response against the saved engine ID. This keeps IDs such as
 `natural-images`. The exact registry entry and resolved argv are persisted so
 registry edits cannot reinterpret an already-running session.
 
+## Validated session parameters and provenance
+
+The registry may declare typed parameters per protocol, plus defaults per
+preset. The initial Natural Images setting is `image_count`, an integer from 1
+to 2800 mapped by trusted server configuration to `--image-count`. The current
+defaults remain 5 for `operator_simulation` and 20 for both Pi5 smoke presets.
+The UI sends only the parameter ID/value pair. The registry rejects unknown
+IDs, booleans, strings, floats, and values outside the declared range.
+
+Profiles are scoped to one protocol and preset and stored under
+`<supervisor-state-dir>/profiles/<protocol>/<preset>/`. They use schema version
+1, a safe generated profile ID, an optimistic version counter, strict parameter
+validation, mode 0600 files, mode 0700 directories, and atomic replacement.
+Flask profile mutations require the operator bearer token. A profile is only a
+template; it never starts a session.
+
+At PREPARE the supervisor resolves and persists the exact parameter values,
+profile ID/name/version, and differences from that profile or preset defaults.
+When the registry declares `session_metadata_flag`, the supervisor writes a
+unique mode-0600 JSON sidecar under its persistent state directory and passes
+only that generated path to the engine. VStim validates its schema, session,
+subject, protocol, profile identity, and image count before using it. The
+Natural Images engine copies the accepted metadata to `provenance.json` and
+`session_manifest.json`; the effective image count is also written to
+`resolved_config.json` and the selected seeded plan. The session's resolved
+plan remains independent of later profile edits.
+
+## Manual bait capability
+
+The monitor already routes `bait_left` and `bait_right` semantically through
+authenticated Flask control, the supervisor, and the active engine socket.
+Buttons appear only for runtime capabilities advertised by the engine. An
+accepted request is reported as accepted; without an engine completion signal,
+the UI explicitly says delivery completion is unknown. The monitor has no
+GPIO write path.
+
+The current Natural Images runner does not wire remote actions to its reward
+arbiter and advertises no bait capability. The shipped Natural Images presets
+keep reward outputs disabled and therefore show no active bait button. A future
+reward-capable task must advertise bait only after it owns and initializes the
+calibrated reward hardware, use the same reward arbiter as task and physical
+button rewards, and publish delivery completion/failure separately from command
+acceptance. BCM23 remains an optional engine-owned physical input and is not
+enabled by this monitor work.
+
 ## Natural Images software-only preset
 
 The `natural_images` registry entry uses engine protocol `natural-images`,
 adapter `unix_json_v1`, and preset `operator_simulation`. A trusted deployment
 registry supplies its executable, working directory, and the
-`config/rigs/natural_images.operator_simulation.toml` path. Its fixed argv uses
-`natural-images run --operator-control --simulate --image-count 5`, an explicit
-temporary output root, and the validated subject ID as `--mouse-id`. The
-integration asserts `--simulate` is present. PREPARE/READY, START/RUNNING,
+`config/rigs/natural_images.operator_simulation.toml` path. The trusted registry
+builds argv for `natural-images run --operator-control --simulate`, an explicit
+temporary output root, the validated subject ID as `--mouse-id`, and the
+resolved `--image-count`. PREPARE also passes a supervisor-created provenance
+sidecar path. The integration asserts `--simulate` is present. PREPARE/READY, START/RUNNING,
 reconnect, STOP/COMPLETE, and READY -> ABORT have been exercised software-only
 against VStim commit `9931500ab4d603ea412e119b065372ba3c887d3d`. The preset uses
 the engine's durable state file to recover STOP, ABORT, natural completion, and

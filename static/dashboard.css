@@ -47,6 +47,33 @@ h1 { margin: 0; font-size: 1.5rem; letter-spacing: -.035em; }
 .launch-fields select { min-width: 125px; max-width: 230px; }
 .launch-fields input { width: 170px; }
 .runtime-fields { display: contents; }
+.session-settings { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.session-settings > summary { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .78rem; font-weight: 650; cursor: pointer; }
+.settings-dirty { color: var(--accent); font-size: .7rem; font-weight: 600; }
+.settings-dirty.dirty { color: var(--warn); }
+.settings-future-note { margin: 5px 0; color: var(--muted); font-size: .7rem; }
+.parameter-fields, .profile-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 6px 8px; }
+.parameter-field { display: grid; gap: 2px; }
+.parameter-field label, .profile-controls label { color: var(--muted); font-size: .7rem; }
+.parameter-field input, .profile-controls input, .profile-controls select, .profile-controls button {
+  min-height: 34px; border: 1px solid #43515a; border-radius: 5px; padding: 5px 8px;
+  background: #12191d; color: var(--text); font: inherit;
+}
+.parameter-field input { width: 120px; }
+.parameter-field small { color: var(--muted); font-size: .65rem; }
+.profile-controls { margin-top: 7px; }
+.profile-controls input { width: 150px; }
+.profile-controls select { min-width: 160px; max-width: 230px; }
+.profile-controls button { cursor: pointer; font-size: .75rem; }
+.profile-controls button:disabled { opacity: .48; cursor: not-allowed; }
+.profile-controls button.danger { border-color: #704044; background: #48292b; color: #ffd9d5; }
+.resolved-settings { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 6px; color: var(--muted); font-size: .7rem; }
+.resolved-settings strong { color: var(--text); }
+.manual-bait-area { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.manual-bait-area > strong { font-size: .72rem; }
+.manual-bait-area > span { flex: 1 1 260px; min-width: 150px; color: var(--muted); font-size: .68rem; }
+.manual-bait-area button { min-height: 34px; padding: 5px 10px; border: 1px solid #735b2c; border-radius: 5px; background: #43351e; color: var(--text); font: inherit; font-size: .76rem; font-weight: 650; cursor: pointer; }
+.manual-bait-area button:disabled { opacity: .48; cursor: not-allowed; }
 .controls-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 7px; }
 .controls-row button { flex: 1 1 118px; cursor: pointer; background: #203b32; border-color: #35614f; font-size: .85rem; font-weight: 700; }
 .controls-row button:hover:not(:disabled) { filter: brightness(1.13); }
@@ -188,6 +215,10 @@ footer { padding: 9px 2px 0; font-size: .72rem; }
   .launch-fields { display: grid; grid-template-columns: minmax(0, 1fr); }
   .launch-fields select, .launch-fields input { width: 100%; max-width: none; }
   .controls-row button { flex: 1 1 calc(50% - 8px); }
+  .profile-controls { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .profile-controls input, .profile-controls select, .parameter-field input { width: 100%; max-width: none; }
+  .parameter-fields { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .manual-bait-area > span { flex-basis: 100%; }
   .metric-grid { grid-template-columns: 1fr; }
   .lick-channels { grid-template-columns: 1fr 1fr; }
   .lick-channel { padding: 6px; font-size: .67rem; }

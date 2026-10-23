@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 from .registry import RegistryError, default_registry
+from .profiles import ProfileError, ProfileStore
 
 ACTIVE_STATES = ("PREPARING", "READY", "RUNNING", "FINISHING")
 TERMINAL_STATES = ("COMPLETE", "ERROR", "ABORTED")
@@ -38,7 +39,9 @@ def _new_record():
         "control_schema_version": 1,
         "protocol_display_name": None, "preset_display_name": None, "adapter_type": None,
         "subject_id": None, "working_directory": None, "launch_metadata": {},
-        "control_state_path": None, "control_state_artifact_type": None, "control_instance_id": None,
+        "parameters": {}, "profile_identity": None, "parameter_overrides": {},
+        "control_state_path": None, "control_state_artifact_type": None,
+        "session_metadata_path": None, "control_instance_id": None,
         "terminal_reason": None, "terminal_command": None, "terminal_request_id": None,
         "engine_error_summary": None, "session_output_path": None,
         "control_state_updated_at_utc": None, "control_state_updated_monotonic_ns": None,
@@ -92,6 +95,30 @@ def _read_control_state_document(path):
     return document, None
 
 
+def _write_json_atomic(path, value):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(str(path.parent), 0o700)
+    fd, name = tempfile.mkstemp(prefix="session-metadata-", suffix=".json", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, str(path))
+        directory = os.open(str(path.parent), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+
+
 def _rpc(path, request, timeout=2.0):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(timeout)
@@ -139,6 +166,7 @@ class SupervisorServer:
         self.socket_path = Path(socket_path).resolve()
         self.telemetry_port = telemetry_port
         self.registry = registry or default_registry()
+        self.profile_store = ProfileStore(self.state_dir / "profiles", self.registry)
         self.state_file = self.state_dir / "supervisor-state.json"
         self.lock_file = self.state_dir / "supervisor.lock"
         self.log_dir = self.state_dir / "logs"
@@ -475,35 +503,85 @@ class SupervisorServer:
         result["session_history"] = list(self.record.get("session_history", []))
         return result
 
-    def prepare(self, protocol_id, request_id=None, preset_id="standard", runtime_fields=None):
+    def prepare(self, protocol_id, request_id=None, preset_id="standard", runtime_fields=None,
+                parameters=None, profile_ref=None):
         if runtime_fields is None:
             runtime_fields = {}
+        if parameters is None:
+            parameters = {}
+        if profile_ref is not None and (
+                not isinstance(profile_ref, dict) or set(profile_ref) != {"profile_id", "version"}
+                or not isinstance(profile_ref.get("profile_id"), str)
+                or type(profile_ref.get("version")) is not int):
+            raise SupervisorError("invalid profile reference")
+        profile_identity = None
+        profile_parameters = {}
+        if profile_ref is not None:
+            try:
+                saved_profile = self.profile_store.get_profile(
+                    protocol_id, preset_id, profile_ref["profile_id"], profile_ref["version"]
+                )
+            except ProfileError as exc:
+                raise SupervisorError(str(exc))
+            profile_identity = {"profile_id": saved_profile["profile_id"],
+                                "name": saved_profile["name"], "version": saved_profile["version"]}
+            profile_parameters = saved_profile["parameters"]
         if not isinstance(runtime_fields, dict):
             raise SupervisorError("runtime fields must be an object")
+        if not isinstance(parameters, dict):
+            raise SupervisorError("session parameters must be an object")
+        try:
+            resolved_parameters = self.registry.validate_parameters(protocol_id, preset_id, parameters)
+        except RegistryError as exc:
+            raise SupervisorError(str(exc))
         self._refresh()
         if self.record["state"] in ACTIVE_STATES or self.record.get("process_running"):
             if (self.record.get("prepare_request_id") == request_id
                     and self.record.get("protocol_id") == protocol_id
                     and self.record.get("preset_id") == preset_id
-                    and self.record.get("launch_metadata", {}).get("runtime_fields", {}) == (runtime_fields or {})):
+                    and self.record.get("launch_metadata", {}).get("runtime_fields", {}) == (runtime_fields or {})
+                    and self.record.get("parameters", {}) == resolved_parameters
+                    and self.record.get("profile_identity") == profile_identity):
                 return self.snapshot()
             raise SupervisorError("an experiment session is already active")
         control_acks = self.record.get("control_acks", {})
         session_id = "session-" + uuid.uuid4().hex[:16]
         endpoint = str(self.state_dir / (session_id + ".sock"))
         state_path = self.state_dir / "control-state" / (session_id + ".json")
+        metadata_path = self.state_dir / "session-metadata" / (session_id + ".json")
         stdout_path = self.log_dir / (session_id + ".stdout.log")
         stderr_path = self.log_dir / (session_id + ".stderr.log")
         try:
+            parameter_overrides = {
+                key: value for key, value in resolved_parameters.items()
+                if (value != profile_parameters.get(key, value) if profile_identity else
+                    value != self.registry.validate_parameters(protocol_id, preset_id, {}).get(key))
+            }
             launch = self.registry.resolve(protocol_id, preset_id, session_id, endpoint,
-                                           self.telemetry_port, runtime_fields or {}, str(state_path))
-        except RegistryError as exc:
+                                           self.telemetry_port, runtime_fields or {}, str(state_path),
+                                           resolved_parameters, profile_identity, parameter_overrides,
+                                           str(metadata_path))
+        except (RegistryError, ProfileError) as exc:
             raise SupervisorError(str(exc))
         if launch.control_state_path:
             state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(str(state_path.parent), 0o700)
             if state_path.exists() or state_path.is_symlink():
                 raise SupervisorError("generated control-state path already exists; refusing to reuse it")
+        if launch.session_metadata_path:
+            if Path(launch.session_metadata_path).exists() or Path(launch.session_metadata_path).is_symlink():
+                raise SupervisorError("generated session-metadata path already exists; refusing to reuse it")
+            _write_json_atomic(launch.session_metadata_path, {
+                "schema_version": 1,
+                "session_id": session_id,
+                "protocol_id": launch.protocol_id,
+                "engine_protocol_id": launch.engine_protocol_id,
+                "preset_id": launch.preset_id,
+                "subject_id": launch.runtime_fields.get("subject_id"),
+                "profile": dict(launch.profile_identity) if launch.profile_identity else None,
+                "parameters": dict(launch.parameters or {}),
+                "parameter_overrides": dict(launch.parameter_overrides or {}),
+            })
         command = list(launch.argv)
         self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         history = list(self.record.get("session_history", []))
@@ -512,7 +590,9 @@ class SupervisorServer:
                 "session_id", "protocol", "protocol_id", "preset_id", "protocol_display_name",
                 "engine_protocol_id", "engine_session_id", "control_schema_version",
                 "preset_display_name", "adapter_type", "subject_id",
+                "parameters", "profile_identity", "parameter_overrides",
                 "working_directory", "launch_metadata", "control_state_path", "control_state_artifact_type",
+                "session_metadata_path",
                 "control_instance_id",
                 "terminal_reason", "terminal_command", "terminal_request_id", "engine_error_summary",
                 "session_output_path", "control_state_updated_at_utc", "control_state_updated_monotonic_ns",
@@ -529,10 +609,17 @@ class SupervisorServer:
                             "protocol_display_name": launch.protocol_display_name,
                             "preset_display_name": launch.preset_display_name, "adapter_type": launch.adapter_type,
                             "subject_id": launch.runtime_fields.get("subject_id"),
+                            "parameters": dict(launch.parameters or {}),
+                            "profile_identity": dict(launch.profile_identity) if launch.profile_identity else None,
+                            "parameter_overrides": dict(launch.parameter_overrides or {}),
                             "working_directory": launch.cwd or str(Path(__file__).resolve().parents[1]),
                             "launch_metadata": {"runtime_fields": dict(launch.runtime_fields),
                                                 "working_directory": launch.cwd,
                                                 "config_path": launch.config_path,
+                                                "parameters": dict(launch.parameters or {}),
+                                                "parameter_overrides": dict(launch.parameter_overrides or {}),
+                                                "profile_identity": dict(launch.profile_identity) if launch.profile_identity else None,
+                                                "session_metadata_path": launch.session_metadata_path,
                                                 "engine_protocol_id": launch.engine_protocol_id,
                                                 "control_schema_version": 1,
                                                 "control_state_path": launch.control_state_path,
@@ -541,6 +628,7 @@ class SupervisorServer:
                             "config_path": launch.config_path,
                             "control_state_path": launch.control_state_path,
                             "control_state_artifact_type": launch.control_state_artifact_type,
+                            "session_metadata_path": launch.session_metadata_path,
                             "started_at": time.time(),
                             "started_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             "started_monotonic": time.monotonic(), "control_endpoint": endpoint,
@@ -619,16 +707,23 @@ class SupervisorServer:
         self._save()
         raise SupervisorError("experiment did not become READY")
 
-    def control(self, command, protocol_id=None, request_id=None, preset_id="standard", runtime_fields=None):
+    def control(self, command, protocol_id=None, request_id=None, preset_id="standard", runtime_fields=None,
+                parameters=None, profile_ref=None):
         if command not in CONTROL_ACTIONS + ("prepare",):
             raise SupervisorError("unsupported control action")
         request_id = request_id or str(uuid.uuid4())
         if runtime_fields is None:
             runtime_fields = {}
+        if parameters is None:
+            parameters = {}
         if not isinstance(runtime_fields, dict):
             raise SupervisorError("runtime fields must be an object")
+        if not isinstance(parameters, dict):
+            raise SupervisorError("session parameters must be an object")
         signature = [command, protocol_id, preset_id if command == "prepare" else None,
-                     runtime_fields if command == "prepare" else {}]
+                     runtime_fields if command == "prepare" else {},
+                     parameters if command == "prepare" else {},
+                     profile_ref if command == "prepare" else None]
         cached = self.record.get("control_acks", {}).get(request_id)
         if cached:
             if cached.get("signature") != signature:
@@ -639,7 +734,7 @@ class SupervisorServer:
                 return self.snapshot()
             return {"ack": cached["ack"], "status": self.snapshot()}
         if command == "prepare":
-            result = self.prepare(protocol_id, request_id, preset_id, runtime_fields)
+            result = self.prepare(protocol_id, request_id, preset_id, runtime_fields, parameters, profile_ref)
             self._remember_ack(request_id, signature, result=True)
             return result
         self._refresh()
@@ -685,23 +780,59 @@ class SupervisorServer:
             return {"ok": True, "status": self.snapshot()}
         if command == "protocols":
             return {"ok": True, "protocols": self.registry.public_metadata()}
+        if command == "profiles":
+            action = request.get("action")
+            expected = {"command", "action", "protocol_id", "preset_id"}
+            if action == "save":
+                expected.update(("name", "parameters"))
+            elif action == "update":
+                expected.update(("profile_id", "version", "name", "parameters"))
+            elif action == "delete":
+                expected.update(("profile_id", "version"))
+            elif action != "list":
+                return {"ok": False, "error": "invalid profile action"}
+            if set(request) != expected:
+                return {"ok": False, "error": "invalid profile request"}
+            try:
+                scope = (request["protocol_id"], request["preset_id"])
+                if action == "list":
+                    return {"ok": True, "profiles": self.profile_store.list_profiles(*scope)}
+                if action == "save":
+                    result = self.profile_store.save_profile(*scope, request["name"], request["parameters"])
+                elif action == "update":
+                    result = self.profile_store.update_profile(
+                        *scope, request["profile_id"], request["version"],
+                        request["name"], request["parameters"])
+                else:
+                    result = self.profile_store.delete_profile(
+                        *scope, request["profile_id"], request["version"])
+                return {"ok": True, "result": result}
+            except (ProfileError, RegistryError) as exc:
+                return {"ok": False, "error": str(exc)}
         if command == "control":
             action = request.get("action")
             expected = {"command", "action", "request_id"}
             if action == "prepare":
                 expected.update(("protocol_id", "preset_id", "fields"))
-            if set(request) != expected:
+                optional = {"parameters", "profile_ref"}
+                if set(request) - expected and not (set(request) - expected).issubset(optional):
+                    return {"ok": False, "error": "invalid control request", "status": self.snapshot()}
+            if (not expected.issubset(request) or
+                    (action != "prepare" and set(request) != expected)):
                 return {"ok": False, "error": "invalid control request", "status": self.snapshot()}
             try:
                 return {"ok": True, "result": self.control(
                     action, request.get("protocol_id"), request.get("request_id"),
-                    request.get("preset_id", "standard"), request.get("fields", {}))}
+                    request.get("preset_id", "standard"), request.get("fields", {}),
+                    request.get("parameters", {}), request.get("profile_ref"))}
             except SupervisorError as exc:
                 request_id = request.get("request_id")
                 if isinstance(request_id, str) and request_id and request_id not in self.record.get("control_acks", {}):
                     self._remember_ack(request_id, [action, request.get("protocol_id"),
                                                      request.get("preset_id") if action == "prepare" else None,
-                                                     request.get("fields", {}) if action == "prepare" else {}],
+                                                     request.get("fields", {}) if action == "prepare" else {},
+                                                     request.get("parameters", {}) if action == "prepare" else {},
+                                                     request.get("profile_ref") if action == "prepare" else None],
                                        error=str(exc))
                 return {"ok": False, "error": str(exc), "status": self.snapshot()}
         if command == "shutdown-supervisor":

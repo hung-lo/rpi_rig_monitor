@@ -116,19 +116,25 @@ def _make_registry(path, executable, checkout, output_root, config=None):
         "engine_protocol_id": "natural-images",
         "control_state_flag": "--control-state-file",
         "control_state_artifact_type": "rpi_vstim.operator_control_state",
+        "session_metadata_flag": "--operator-session-metadata",
         "executable": [str(executable)],
         "working_directory": str(checkout),
         "runtime_fields": [{"name": "subject_id", "display_name": "Subject / Mouse ID",
                             "required": True, "type": "subject_id", "cli_flag": "--mouse-id"}],
+        "parameters": [{"name": "image_count", "display_name": "Image count",
+                        "type": "integer", "default": 5, "minimum": 1, "maximum": 2800,
+                        "units": "images", "description": "Number of selected natural images.",
+                        "cli_flag": "--image-count"}],
         "presets": [{
             "preset_id": "operator_simulation",
             "display_name": "Operator simulation",
             "description": "Five-image FakeDisplayBackend validation; no physical hardware.",
             "config_path": str(profile),
             "arguments": ["natural-images", "run", "--config", str(profile),
-                          "--image-count", "5", "--simulate", "--operator-control",
+                          "--simulate", "--operator-control",
                           "--output-root", str(output_root)],
             "required_files": [str(profile)],
+            "parameter_defaults": {"image_count": 5},
         }],
     }
     path.write_text(json.dumps({"schema_version": 1, "protocols": [entry]}))
@@ -295,6 +301,12 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             preset = next(item for item in natural["presets"]
                           if item["preset_id"] == "operator_simulation")
             assert natural["available"] and preset["available"]
+            assert preset["parameters"] == [{"name": "image_count",
+                                              "display_name": "Image count", "type": "integer",
+                                              "default": 5, "minimum": 1, "maximum": 2800,
+                                              "units": "images",
+                                              "description": "Number of selected natural images.",
+                                              "editable_before_prepare": True}]
             assert not any(key in natural for key in
                             ("executable", "argv", "cwd", "environment", "config_path"))
             assert "config_path" not in preset
@@ -622,12 +634,26 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert not Path(after_abort["control_endpoint"]).exists()
             assert control("abort", "real-abort-running-1")["ack"] == running_abort["ack"]
 
-            # A short five-image simulation also reaches an engine-authored COMPLETE naturally.
+            # A short profiled simulation also reaches an engine-authored COMPLETE naturally.
             registry_path.write_text(good_registry)
             client = restart_supervisor()
+            profile_status, saved_profile = _http(
+                web_port, "/api/profiles",
+                {"action": "save", "protocol_id": "natural_images",
+                 "preset_id": "operator_simulation", "name": "Five image base",
+                 "parameters": {"image_count": 5}}, token,
+            )
+            assert profile_status == 200
             natural_task = control("prepare", "natural-completion-prepare", protocol_id="natural_images",
-                                   preset_id="operator_simulation", fields={"subject_id": "example_mouse"})
+                                   preset_id="operator_simulation", fields={"subject_id": "example_mouse"},
+                                   parameters={"image_count": 4},
+                                   profile_ref={"profile_id": saved_profile["profile_id"], "version": 1})
             assert_new_control_state_path(natural_task)
+            assert natural_task["parameters"] == {"image_count": 4}
+            assert natural_task["parameter_overrides"] == {"image_count": 4}
+            assert natural_task["profile_identity"]["version"] == 1
+            assert "--image-count" in natural_task["command"]
+            assert natural_task["command"][natural_task["command"].index("--image-count") + 1] == "4"
             control("start", "natural-completion-start")
             natural_complete = wait_exited_state(client, "COMPLETE", timeout=45)
             natural_state = json.loads(Path(natural_complete["control_state_path"]).read_text())
@@ -636,6 +662,21 @@ def test_real_natural_images_v1_reconnect_and_lifecycle():
             assert natural_state["terminal_request_id"] is None
             assert natural_complete["session_id"] == natural_task["session_id"]
             assert not Path(natural_complete["control_endpoint"]).exists()
+            session_output = output_root / natural_task["session_id"]
+            provenance = json.loads((session_output / "provenance.json").read_text())
+            manifest = json.loads((session_output / "session_manifest.json").read_text())
+            plan = json.loads((session_output / "plan.json").read_text())
+            resolved_config = json.loads((session_output / "resolved_config.json").read_text())
+            monitor_configuration = provenance["monitor_session_configuration"]
+            assert monitor_configuration["protocol_id"] == "natural_images"
+            assert monitor_configuration["preset_id"] == "operator_simulation"
+            assert monitor_configuration["profile"]["profile_id"] == saved_profile["profile_id"]
+            assert monitor_configuration["profile"]["version"] == 1
+            assert monitor_configuration["parameters"] == {"image_count": 4}
+            assert monitor_configuration["parameter_overrides"] == {"image_count": 4}
+            assert manifest["monitor_session_configuration"] == monitor_configuration
+            assert resolved_config["protocol"]["parameters"]["image_count"] == 4
+            assert len(plan["metadata"]["selected_images"]) == 4
         finally:
             if client is not None:
                 try:

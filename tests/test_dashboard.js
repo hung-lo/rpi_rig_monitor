@@ -38,7 +38,16 @@ class Element {
       add(...names) { const classes = new Set(element.className.split(/\s+/).filter(Boolean)); names.forEach((name) => classes.add(name)); element.className = [...classes].join(" "); },
       remove(...names) { const classes = new Set(element.className.split(/\s+/).filter(Boolean)); names.forEach((name) => classes.delete(name)); element.className = [...classes].join(" "); },
       contains(name) { return element.className.split(/\s+/).includes(name); },
+      toggle(name, force) { const classes = new Set(element.className.split(/\s+/).filter(Boolean)); const add = force === undefined ? !classes.has(name) : !!force; if (add) classes.add(name); else classes.delete(name); element.className = [...classes].join(" "); return add; },
     };
+  }
+  checkValidity() {
+    if (this.required && !this.value) return false;
+    if (this.value === "") return !this.required;
+    const value = Number(this.value);
+    if (this.type === "number" && (!Number.isInteger(value) || value < Number(this.min) || value > Number(this.max))) return false;
+    if (this.pattern && !new RegExp("^(?:" + this.pattern + ")$").test(this.value)) return false;
+    return true;
   }
   appendChild(child) {
     child.parentNode = this;
@@ -67,7 +76,10 @@ const protocols = ["natural_images", "reward_conditioning", "spout_training", "f
   display_name: protocol_id,
   available: true,
   runtime_fields: [],
-  presets: [{ preset_id: protocol_id + "_preset", display_name: "Standard", available: true }],
+  presets: [{ preset_id: protocol_id + "_preset", display_name: "Standard", available: true,
+    parameters: protocol_id === "natural_images" ? [{ name: "image_count", display_name: "Image count",
+      type: "integer", default: 5, minimum: 1, maximum: 2800, units: "images",
+      description: "Number of images." }] : [] }],
 }));
 
 function baseState(overrides = {}) {
@@ -100,7 +112,7 @@ function baseState(overrides = {}) {
   }, overrides);
 }
 
-async function createDashboard(initialState, choices = protocols) {
+async function createDashboard(initialState, choices = protocols, profileResponse = []) {
   const elements = new Map();
   const getElement = (id, tagName = "div") => {
     if (!elements.has(id)) elements.set(id, new Element(tagName, id));
@@ -130,20 +142,36 @@ async function createDashboard(initialState, choices = protocols) {
     createElement(tag) { return new Element(tag); },
     createElementNS(_namespace, tag) { return new Element(tag); },
   };
-  const fetch = (url) => {
-    const payload = url === "/api/protocols" ? choices : state;
+  const requests = [];
+  const fetch = (url, options = {}) => {
+    requests.push({ url, options });
+    const payload = url === "/api/protocols" ? choices :
+      (url.indexOf("/api/profiles?") === 0 ? profileResponse : state);
     return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
   };
-  const window = { crypto: { randomUUID: () => "test-request" }, setInterval(callback) { intervalCallback = callback; return 1; } };
-  vm.runInNewContext(source, { document, fetch, Option: OptionElement, window, console, encodeURIComponent });
+  const storage = new Map();
+  const localStorage = { getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); } };
+  const window = { crypto: { randomUUID: () => "test-request" }, confirm: () => true,
+    setInterval(callback) { intervalCallback = callback; return 1; } };
+  vm.runInNewContext(source, { document, fetch, Option: OptionElement, window, localStorage,
+    console, encodeURIComponent, Date });
   const flush = async () => { for (let index = 0; index < 4; index += 1) await new Promise(setImmediate); };
   await flush();
   return {
     element: getElement,
+    hasElement(id) { return elements.has(id); },
     setState(value) { state = value; },
     async poll() { intervalCallback(); await flush(); },
     async flush() { await flush(); },
+    requests,
   };
+}
+
+function parameterInput(app, name) {
+  const wrapper = app.element("parameter-fields").children.find((item) =>
+    item.children.some((child) => child.id === "parameter-" + name));
+  return wrapper && wrapper.children.find((child) => child.id === "parameter-" + name);
 }
 
 test("Natural Images shows the selected preview, sequence and independent lick channels", async () => {
@@ -297,6 +325,88 @@ test("Protocol switching changes the preset list without moving controls", async
   assert.equal(app.element("preset-select").value, "spout_training_preset");
   assert.equal(app.element("prepare-button").hidden, false);
   assert.equal(app.element("stop-button").hidden, false);
+});
+
+test("Natural Images settings expose only validated image count and mark edits for future sessions", async () => {
+  const app = await createDashboard(baseState());
+  const input = parameterInput(app, "image_count");
+  assert.equal(input.value, "5");
+  assert.match(app.element("resolved-settings-summary").textContent, /Image count: 5 images/);
+  input.value = "12";
+  input.dispatch("input");
+  assert.equal(app.element("settings-dirty").textContent, "Unsaved changes");
+  assert.match(app.element("resolved-settings-summary").textContent, /Image count: 12 images/);
+  assert.equal(app.element("parameter-fields").children.some((wrapper) =>
+    wrapper.children.some((child) => child.id === "parameter-rule_switch_block")), false);
+  assert.match(app.element("settings-future-note").textContent, /future session only/);
+  assert.equal(app.element("profile-save-button").disabled, true);
+  app.element("control-token").value = "operator-token";
+  app.element("control-token").dispatch("input");
+  await app.flush();
+  app.element("profile-name").value = "short run";
+  app.element("profile-name").dispatch("input");
+  assert.equal(app.element("profile-save-button").disabled, false);
+});
+
+test("Saved profile loads validated values and returns explicitly to preset defaults", async () => {
+  const profile = { profile_id: "profile-0123456789abcdef0123456789abcdef", name: "Six images",
+    version: 2, parameters: { image_count: 6 }, valid: true };
+  const app = await createDashboard(baseState(), protocols, [profile]);
+  app.element("session-profile-select").value = profile.profile_id;
+  app.element("session-profile-select").dispatch("change");
+  assert.equal(parameterInput(app, "image_count").value, "6");
+  assert.equal(app.element("settings-dirty").textContent, "Profile v2");
+  app.element("settings-defaults-button").dispatch("click");
+  assert.equal(parameterInput(app, "image_count").value, "5");
+  assert.equal(app.element("settings-dirty").textContent, "Defaults");
+});
+
+test("Invalid saved profile can be corrected for a future prepare without reusing its identity", async () => {
+  const profile = { profile_id: "profile-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", name: "Old profile",
+    version: 3, parameters: { image_count: "invalid" }, valid: false, error: "deprecated value" };
+  const app = await createDashboard(baseState(), protocols, [profile]);
+  app.element("control-token").value = "operator-token";
+  app.element("control-token").dispatch("input");
+  await app.flush();
+  app.element("session-profile-select").value = profile.profile_id;
+  app.element("session-profile-select").dispatch("change");
+  assert.equal(app.element("profile-update-button").disabled, true);
+  assert.match(app.element("profile-message").textContent, /save them as a new profile/);
+  const input = parameterInput(app, "image_count");
+  input.value = "9";
+  input.dispatch("input");
+  assert.equal(app.element("profile-update-button").disabled, false);
+  assert.equal(app.element("prepare-button").disabled, false);
+  app.element("prepare-button").dispatch("click");
+  await app.flush();
+  const request = app.requests.find((item) => item.url === "/api/control");
+  assert.deepEqual(JSON.parse(request.options.body).parameters, { image_count: 9 });
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(request.options.body), "profile_ref"), false);
+});
+
+test("Manual bait stays hidden unless the engine advertises it and never reports delivery from HTTP ack", async () => {
+  const sessionId = "bait-capability";
+  const unsupported = await createDashboard(baseState({ protocol: "natural_images", session_id: sessionId,
+    supervisor: { ...baseState().supervisor, session_id: sessionId, protocol_id: "natural_images",
+      state: "READY", process_running: true, control_connected: true,
+      capabilities: { start: true, stop: false, abort: true, bait_left: false } } }));
+  assert.equal(unsupported.element("bait-left-button").hidden, true);
+  assert.match(unsupported.element("manual-bait-explanation").textContent, /not supported/);
+
+  const supported = await createDashboard(baseState({ protocol: "external_reward", session_id: sessionId,
+    supervisor: { ...baseState().supervisor, session_id: sessionId, protocol_id: "external_reward",
+      state: "READY", process_running: true, control_connected: true,
+      capabilities: { start: true, abort: true, bait_left: true } } }));
+  supported.element("control-token").value = "operator-token";
+  supported.element("control-token").dispatch("input");
+  await supported.flush();
+  assert.equal(supported.element("bait-left-button").hidden, false);
+  assert.equal(supported.element("bait-left-button").disabled, false);
+  supported.element("bait-left-button").dispatch("click");
+  await supported.flush();
+  const request = supported.requests.find((item) => item.url === "/api/control");
+  assert.deepEqual(JSON.parse(request.options.body), { command: "bait_left", request_id: "test-request" });
+  assert.match(supported.element("control-message").textContent, /completion is not reported/);
 });
 
 test("Long session and protocol strings remain text, and diagnostic details stay open while polling", async () => {

@@ -423,6 +423,12 @@
   var operatorToken = "";
   var protocolChoices = [];
   var runtimeFieldInputs = {};
+  var parameterInputs = {};
+  var profileChoices = [];
+  var selectedProfile = null;
+  var profileBaseParameters = {};
+  var profileRequestSequence = 0;
+  var baitBusyUntil = {};
   var pendingControlIds = {};
   var hardwareLabels = { display: "Display", camera_1: "Camera 1", camera_2: "Camera 2", storage: "Storage", gpio: "GPIO", irig: "IRIG", chrony: "Chrony", audio: "Audio" };
   var integrityLabels = { event_drops: "Event drops", writer_errors: "Writer errors", kms_completed: "KMS completed", kms_long_intervals: "KMS long intervals", camera_errors: "Camera errors" };
@@ -464,6 +470,136 @@
     var protocol = selectedProtocol();
     return protocol && protocol.presets.find(function (item) { return item.preset_id === $("preset-select").value; });
   }
+  function settingKey(protocolId, presetId) { return "rig-monitor-profile:" + protocolId + ":" + presetId; }
+  function rememberSelection() {
+    try {
+      localStorage.setItem("rig-monitor-protocol", $("protocol-select").value || "");
+      localStorage.setItem("rig-monitor-preset:" + $("protocol-select").value, $("preset-select").value || "");
+    } catch (_error) { /* Storage is optional; profiles remain server-side. */ }
+  }
+  function parameterDefaults(preset) {
+    var result = {};
+    (preset && Array.isArray(preset.parameters) ? preset.parameters : []).forEach(function (parameter) {
+      result[parameter.name] = parameter.default;
+    });
+    return result;
+  }
+  function readParameterValues() {
+    var result = {};
+    Object.keys(parameterInputs).forEach(function (name) {
+      var input = parameterInputs[name];
+      if (input.value !== "" && /^-?\d+$/.test(input.value)) result[name] = Number(input.value);
+    });
+    return result;
+  }
+  function parameterInputsValid() {
+    return Object.keys(parameterInputs).every(function (name) { return parameterInputs[name].checkValidity(); });
+  }
+  function settingsValid() {
+    return parameterInputsValid();
+  }
+  function sameParameters(left, right) {
+    var keys = Object.keys(left || {}), otherKeys = Object.keys(right || {});
+    return keys.length === otherKeys.length && keys.every(function (key) { return left[key] === right[key]; });
+  }
+  function updateSettingsSummary() {
+    var preset = selectedPreset(), values = readParameterValues(), definitions = preset && preset.parameters || [];
+    var summary = definitions.map(function (parameter) {
+      var suffix = parameter.units ? " " + parameter.units : "";
+      return parameter.display_name + ": " + text(values[parameter.name]) + suffix;
+    });
+    $("resolved-settings-summary").textContent = summary.length ? summary.join(" · ") : "No editable settings for this preset.";
+    var dirty = !sameParameters(values, profileBaseParameters);
+    var label = selectedProfile ? (selectedProfile.valid === false && !dirty ? "Invalid profile" :
+      (dirty ? "Unsaved changes" : "Profile v" + selectedProfile.version)) : (dirty ? "Unsaved changes" : "Defaults");
+    $("settings-dirty").textContent = label;
+    $("settings-dirty").className = "settings-dirty" + (dirty || (selectedProfile && selectedProfile.valid === false) ? " dirty" : "");
+    var hasFields = definitions.length > 0, authorized = operatorToken.length > 0;
+    $("profile-save-button").disabled = !hasFields || !authorized || !parameterInputsValid() || !$("profile-name").value.trim();
+    $("profile-update-button").disabled = !hasFields || !authorized || !selectedProfile ||
+      !Number.isInteger(selectedProfile.version) || !parameterInputsValid() || !$("profile-name").value.trim();
+    $("profile-delete-button").disabled = !authorized || !selectedProfile;
+    $("settings-defaults-button").disabled = !hasFields;
+  }
+  function setProfileSelection(profileId) {
+    var selected = profileChoices.find(function (item) { return item.profile_id === profileId; });
+    selectedProfile = selected || null;
+    profileBaseParameters = selected ? Object.assign({}, selected.parameters || {}) : parameterDefaults(selectedPreset());
+    if (selected) {
+      Object.keys(parameterInputs).forEach(function (name) {
+        if (Object.prototype.hasOwnProperty.call(selected.parameters || {}, name)) {
+          parameterInputs[name].value = String(selected.parameters[name]);
+        } else parameterInputs[name].value = "";
+      });
+      $("profile-name").value = selected.name || "";
+      $("profile-message").textContent = selected.valid === false ?
+        "This saved profile needs correction: " + (selected.error || "invalid settings") +
+        ". Correct supported values and update it, or save them as a new profile if its schema is obsolete." : "";
+    } else {
+      Object.keys(parameterInputs).forEach(function (name) {
+        parameterInputs[name].value = String(profileBaseParameters[name]);
+      });
+      $("profile-name").value = "";
+      $("profile-message").textContent = "";
+    }
+    try {
+      if (selected) localStorage.setItem(settingKey($("protocol-select").value, $("preset-select").value), selected.profile_id);
+      else localStorage.removeItem(settingKey($("protocol-select").value, $("preset-select").value));
+    } catch (_error) { /* Selection persistence is optional. */ }
+    updateSettingsSummary();
+    renderOperatorFromLastState();
+  }
+  function loadProfiles(preferredProfileId) {
+    var protocol = $("protocol-select").value, preset = $("preset-select").value;
+    var sequence = ++profileRequestSequence, select = $("session-profile-select");
+    profileChoices = []; clear(select); select.appendChild(new Option("Protocol defaults", ""));
+    if (!protocol || !preset) { setProfileSelection(""); return; }
+    fetch("/api/profiles?protocol_id=" + encodeURIComponent(protocol) + "&preset_id=" + encodeURIComponent(preset),
+      { cache: "no-store" }).then(function (response) {
+      if (!response.ok) throw new Error("Saved profiles unavailable");
+      return response.json();
+    }).then(function (items) {
+      if (sequence !== profileRequestSequence || protocol !== $("protocol-select").value || preset !== $("preset-select").value) return;
+      profileChoices = Array.isArray(items) ? items : [];
+      profileChoices.forEach(function (profile) {
+        var label = profile.name || "Invalid profile";
+        if (profile.valid === false) label += " · needs correction";
+        select.appendChild(new Option(label, profile.profile_id));
+      });
+      var stored = preferredProfileId || null;
+      try { stored = localStorage.getItem(settingKey(protocol, preset)); } catch (_error) { stored = null; }
+      if (preferredProfileId) stored = preferredProfileId;
+      if (stored && profileChoices.some(function (item) { return item.profile_id === stored; })) {
+        select.value = stored;
+        setProfileSelection(stored);
+      } else setProfileSelection("");
+    }).catch(function (error) {
+      if (sequence === profileRequestSequence) $("profile-message").textContent = error.message;
+    });
+  }
+  function renderSessionSettings() {
+    var container = $("parameter-fields"), preset = selectedPreset();
+    clear(container); parameterInputs = {}; selectedProfile = null;
+    profileBaseParameters = parameterDefaults(preset);
+    (preset && Array.isArray(preset.parameters) ? preset.parameters : []).forEach(function (parameter) {
+      if (parameter.type !== "integer") return;
+      var wrapper = document.createElement("div"), label = document.createElement("label");
+      var input = document.createElement("input"), help = document.createElement("small");
+      wrapper.className = "parameter-field"; input.type = "number"; input.step = "1";
+      input.min = String(parameter.minimum); input.max = String(parameter.maximum);
+      input.required = true; input.id = "parameter-" + parameter.name; input.value = String(parameter.default);
+      label.textContent = parameter.display_name; label.htmlFor = input.id;
+      help.textContent = parameter.description + " (" + parameter.minimum + "–" + parameter.maximum +
+        (parameter.units ? " " + parameter.units : "") + ")";
+      input.title = parameter.description;
+      wrapper.appendChild(label); wrapper.appendChild(input); wrapper.appendChild(help); container.appendChild(wrapper);
+      parameterInputs[parameter.name] = input;
+      input.addEventListener("input", function () { updateSettingsSummary(); renderOperatorFromLastState(); });
+    });
+    $("session-profile-select").value = "";
+    updateSettingsSummary();
+    loadProfiles();
+  }
   function runtimeFieldsValid() {
     var protocol = selectedProtocol();
     if (!protocol) return false;
@@ -471,11 +607,14 @@
       var input = runtimeFieldInputs[field.name];
       return !!input && (!field.required || input.checkValidity()) &&
         (input.value === "" || input.checkValidity());
-    });
+    }) && settingsValid();
   }
   function renderPresets() {
     var select = $("preset-select"), protocol = selectedProtocol(); clear(select);
-    if (!protocol) { select.appendChild(new Option("No available presets", "")); select.disabled = true; return; }
+    if (!protocol) {
+      select.appendChild(new Option("No available presets", "")); select.disabled = true;
+      renderRuntimeFields(); renderSessionSettings(); return;
+    }
     protocol.presets.forEach(function (preset) {
       var option = new Option(preset.display_name + (preset.available ? "" : " · unavailable"), preset.preset_id);
       option.disabled = preset.available !== true;
@@ -483,8 +622,11 @@
       select.appendChild(option);
     });
     var firstAvailable = protocol.presets.find(function (preset) { return preset.available === true; });
-    if (firstAvailable) select.value = firstAvailable.preset_id;
-    renderRuntimeFields();
+    var remembered = null;
+    try { remembered = localStorage.getItem("rig-monitor-preset:" + protocol.protocol_id); } catch (_error) { remembered = null; }
+    if (remembered && protocol.presets.some(function (preset) { return preset.preset_id === remembered && preset.available === true; })) select.value = remembered;
+    else if (firstAvailable) select.value = firstAvailable.preset_id;
+    renderRuntimeFields(); renderSessionSettings(); rememberSelection();
   }
   function renderRuntimeFields() {
     var container = $("runtime-fields"), protocol = selectedProtocol(); clear(container);
@@ -547,6 +689,21 @@
       button.disabled = !canControl || !taskControlAvailable || capabilities[name] !== true;
       if (name.indexOf("bait_") === 0) button.hidden = capabilities[name] !== true;
     });
+    var activeSession = ["PREPARING", "READY", "RUNNING", "FINISHING"].indexOf(supervisor.state) >= 0;
+    $("session-settings").classList.toggle("active-session-settings", activeSession);
+    $("manual-bait-explanation").textContent = capabilities.bait_left === true || capabilities.bait_right === true ?
+      "The engine advertises these semantic actions. An accepted request does not confirm delivery completion." :
+      (supervisor.session_id ? "Manual bait not supported in this engine state or protocol." :
+        "Manual bait is unavailable until an active engine advertises a calibrated reward action.");
+    ["bait_left", "bait_right"].forEach(function (name) {
+      var button = $(name.replace("_", "-") + "-button");
+      var busy = Date.now() < (baitBusyUntil[name] || 0) || baitBusyUntil[name] === Infinity;
+      button.disabled = !canControl || !taskControlAvailable || capabilities[name] !== true || busy;
+    });
+    $("settings-future-note").textContent = activeSession ?
+      "A session is active. Changes here affect future sessions only; its resolved plan is fixed." :
+      "These values apply to a future session only. A prepared session keeps its resolved settings.";
+    updateSettingsSummary();
     if (data.control_enabled !== true) $("control-help").textContent = "Browser controls are disabled until the server is configured with RIG_MONITOR_CONTROL_TOKEN.";
     else if (!hasToken) $("control-help").textContent = "Enter the operator token configured on the monitor server to enable valid controls.";
     else if (!supervisor.available) $("control-help").textContent = "Supervisor unavailable. Task state is unknown unless telemetry is still arriving; no launch is attempted.";
@@ -599,7 +756,10 @@
         select.appendChild(option);
       });
       var firstAvailable = protocolChoices.find(function (item) { return item.available === true; });
-      if (firstAvailable) select.value = firstAvailable.protocol_id;
+      var remembered = null;
+      try { remembered = localStorage.getItem("rig-monitor-protocol"); } catch (_error) { remembered = null; }
+      if (remembered && protocolChoices.some(function (item) { return item.protocol_id === remembered && item.available === true; })) select.value = remembered;
+      else if (firstAvailable) select.value = firstAvailable.protocol_id;
       select.disabled = !firstAvailable;
       renderPresets(); renderOperatorFromLastState();
     }).catch(function () { $("protocol-select").innerHTML = "<option value=''>Supervisor unavailable</option>"; });
@@ -618,16 +778,82 @@
       Object.keys(runtimeFieldInputs).forEach(function (name) {
         if (runtimeFieldInputs[name].value !== "") body.fields[name] = runtimeFieldInputs[name].value;
       });
+      body.parameters = readParameterValues();
+      if (selectedProfile && selectedProfile.valid === true) {
+        body.profile_ref = { profile_id: selectedProfile.profile_id, version: selectedProfile.version };
+      }
     }
-    $("control-message").textContent = "Sending " + command.replace(/_/g, " ") + "…";
+    var isBait = command === "bait_left" || command === "bait_right";
+    if (isBait) {
+      baitBusyUntil[command] = Infinity;
+      $(command.replace("_", "-") + "-button").disabled = true;
+    }
+    $("control-message").textContent = isBait ? "Manual bait request submitted to supervisor…" :
+      "Sending " + command.replace(/_/g, " ") + "…";
+    var responseStatus = null;
     fetch("/api/control", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + operatorToken }, body: JSON.stringify(body) })
-      .then(function (response) { return response.json().then(function (value) { receivedResponse = true; if (!response.ok) throw new Error(value.error || "command rejected"); return value; }); })
-      .then(function () { delete pendingControlIds[command]; $("control-message").textContent = command.replace(/_/g, " ") + " acknowledged"; poll(); })
-      .catch(function (error) { if (receivedResponse) delete pendingControlIds[command]; $("control-message").textContent = error.message; });
+      .then(function (response) { responseStatus = response.status; return response.json().then(function (value) { receivedResponse = true; if (!response.ok) throw new Error(value.error || "command rejected"); return value; }); })
+      .then(function (value) {
+        delete pendingControlIds[command];
+        if (isBait) {
+          baitBusyUntil[command] = Date.now() + 1500;
+          $("control-message").textContent = "Engine accepted the manual bait request. Delivery completion is not reported to this monitor.";
+        } else $("control-message").textContent = command.replace(/_/g, " ") + " acknowledged";
+        poll();
+      })
+      .catch(function (error) {
+        if (receivedResponse) delete pendingControlIds[command];
+        var baitUncertain = isBait && (!receivedResponse || responseStatus >= 500);
+        if (isBait) baitBusyUntil[command] = baitUncertain ? Infinity : 0;
+        $("control-message").textContent = baitUncertain ?
+          "Manual bait response is uncertain. No retry was sent; inspect the engine before another request." :
+          (isBait ? "Manual bait request rejected: " : "") + error.message;
+      });
+  }
+  function mutateProfile(action) {
+    var protocol = $("protocol-select").value, preset = $("preset-select").value;
+    var body = { action: action, protocol_id: protocol, preset_id: preset };
+    if (action === "save") {
+      body.name = $("profile-name").value.trim(); body.parameters = readParameterValues();
+    } else if (action === "update") {
+      if (!selectedProfile) return;
+      body.profile_id = selectedProfile.profile_id; body.version = selectedProfile.version;
+      body.name = $("profile-name").value.trim(); body.parameters = readParameterValues();
+    } else {
+      if (!selectedProfile || !window.confirm("Delete saved profile ‘" + selectedProfile.name + "’?")) return;
+      body.profile_id = selectedProfile.profile_id;
+      body.version = selectedProfile.version === undefined ? null : selectedProfile.version;
+    }
+    $("profile-message").textContent = action === "delete" ? "Deleting profile…" : "Saving profile…";
+    fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json",
+      "Authorization": "Bearer " + operatorToken }, body: JSON.stringify(body) })
+      .then(function (response) { return response.json().then(function (value) {
+        if (!response.ok) throw new Error(value.error || "profile operation failed");
+        return value;
+      }); })
+      .then(function (value) {
+        if (action === "delete") {
+          selectedProfile = null;
+          try { localStorage.removeItem(settingKey(protocol, preset)); } catch (_error) { /* optional */ }
+          $("profile-message").textContent = "Profile deleted.";
+          loadProfiles("");
+        } else {
+          var saved = value;
+          $("profile-message").textContent = action === "save" ? "Profile saved." : "Profile updated.";
+          loadProfiles(saved.profile_id);
+        }
+      })
+      .catch(function (error) { $("profile-message").textContent = error.message; });
   }
   $("control-token").addEventListener("input", function (event) { operatorToken = event.target.value; poll(); });
-  $("protocol-select").addEventListener("change", function () { renderPresets(); renderOperatorFromLastState(); });
-  $("preset-select").addEventListener("change", renderOperatorFromLastState);
+  $("protocol-select").addEventListener("change", function () { rememberSelection(); renderPresets(); renderOperatorFromLastState(); });
+  $("preset-select").addEventListener("change", function () { renderSessionSettings(); rememberSelection(); renderOperatorFromLastState(); });
+  $("session-profile-select").addEventListener("change", function (event) { setProfileSelection(event.target.value); });
+  $("profile-name").addEventListener("input", updateSettingsSummary);
+  $("profile-save-button").addEventListener("click", function () { mutateProfile("save"); });
+  $("profile-update-button").addEventListener("click", function () { mutateProfile("update"); });
+  $("profile-delete-button").addEventListener("click", function () { mutateProfile("delete"); });
+  $("settings-defaults-button").addEventListener("click", function () { setProfileSelection(""); });
   [["prepare-button", "prepare"], ["start-button", "start"], ["stop-button", "stop"], ["abort-button", "abort"], ["bait-left-button", "bait_left"], ["bait-right-button", "bait_right"]].forEach(function (item) {
     $(item[0]).addEventListener("click", function () { sendControl(item[1]); });
   });

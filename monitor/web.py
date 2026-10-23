@@ -56,6 +56,59 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
         except SupervisorError as exc:
             return jsonify({"error": str(exc)}), 503
 
+    @app.route("/api/profiles", methods=["GET", "POST"])
+    def api_profiles():
+        if supervisor is None:
+            return jsonify({"error": "supervisor unavailable"}), 503
+        if request.method == "GET":
+            protocol_id = request.args.get("protocol_id", "")
+            preset_id = request.args.get("preset_id", "")
+            if not PROTOCOL_ID_RE.fullmatch(protocol_id) or not PROTOCOL_ID_RE.fullmatch(preset_id):
+                return jsonify({"error": "valid protocol_id and preset_id are required"}), 400
+            try:
+                response = supervisor.request({"command": "profiles", "action": "list",
+                                               "protocol_id": protocol_id, "preset_id": preset_id})
+            except SupervisorError as exc:
+                return jsonify({"error": str(exc)}), 503
+            if response.get("ok") is not True:
+                return jsonify({"error": response.get("error", "profile request failed")}), 400
+            return jsonify(response.get("profiles", []))
+
+        supplied = request.headers.get("Authorization", "")
+        if not control_token:
+            return jsonify({"error": "profile changes are disabled; configure RIG_MONITOR_CONTROL_TOKEN"}), 503
+        if not hmac.compare_digest(supplied.encode("utf-8"), ("Bearer " + control_token).encode("utf-8")):
+            return jsonify({"error": "operator authorization required"}), 401
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "invalid profile request"}), 400
+        action = body.get("action")
+        common = {"action", "protocol_id", "preset_id"}
+        expected = common | ({"name", "parameters"} if action == "save" else
+                             {"profile_id", "version", "name", "parameters"} if action == "update" else
+                             {"profile_id", "version"} if action == "delete" else set())
+        if (action not in {"save", "update", "delete"} or set(body) != expected
+                or not isinstance(body.get("protocol_id"), str)
+                or not PROTOCOL_ID_RE.fullmatch(body["protocol_id"])
+                or not isinstance(body.get("preset_id"), str)
+                or not PROTOCOL_ID_RE.fullmatch(body["preset_id"])):
+            return jsonify({"error": "invalid profile request"}), 400
+        if action in {"save", "update"} and not isinstance(body.get("parameters"), dict):
+            return jsonify({"error": "parameters must be an object"}), 400
+        if action == "update" and type(body.get("version")) is not int:
+            return jsonify({"error": "profile version is required"}), 400
+        if action == "delete" and body.get("version") is not None and type(body.get("version")) is not int:
+            return jsonify({"error": "profile version is invalid"}), 400
+        payload = dict(body)
+        payload["command"] = "profiles"
+        try:
+            response = supervisor.request(payload)
+        except SupervisorError as exc:
+            return jsonify({"error": str(exc)}), 503
+        if response.get("ok") is not True:
+            return jsonify({"error": response.get("error", "profile operation failed")}), 409
+        return jsonify(response.get("result", {}))
+
     @app.route("/api/control", methods=["POST"])
     def api_control():
         if not control_token:
@@ -74,10 +127,17 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
         if command == "prepare":
             protocol_id, preset_id, fields = (body.get("protocol_id"), body.get("preset_id"),
                                                 body.get("fields"))
-            if (set(body) != {"command", "request_id", "protocol_id", "preset_id", "fields"} or
+            allowed = {"command", "request_id", "protocol_id", "preset_id", "fields",
+                       "parameters", "profile_ref"}
+            if (set(body) - allowed or
                     not isinstance(protocol_id, str) or not PROTOCOL_ID_RE.fullmatch(protocol_id) or
                     not isinstance(preset_id, str) or not PROTOCOL_ID_RE.fullmatch(preset_id) or
-                    not isinstance(fields, dict)):
+                    not isinstance(fields, dict) or
+                    ("parameters" in body and not isinstance(body["parameters"], dict)) or
+                    ("profile_ref" in body and (not isinstance(body["profile_ref"], dict)
+                     or set(body["profile_ref"]) != {"profile_id", "version"}
+                     or not isinstance(body["profile_ref"].get("profile_id"), str)
+                     or type(body["profile_ref"].get("version")) is not int))):
                 return jsonify({"error": "invalid control request"}), 400
         elif set(body) != {"command", "request_id"}:
             return jsonify({"error": "invalid control request"}), 400
@@ -95,6 +155,10 @@ def create_app(state: MonitorState, receiver=None, image_dir=None, supervisor=No
         payload = {"command": "control", "action": command, "request_id": request_id}
         if command == "prepare":
             payload.update({"protocol_id": protocol_id, "preset_id": preset_id, "fields": fields})
+            if "parameters" in body:
+                payload["parameters"] = body["parameters"]
+            if "profile_ref" in body:
+                payload["profile_ref"] = body["profile_ref"]
         try:
             response = supervisor.request(payload)
         except SupervisorError as exc:
@@ -222,6 +286,9 @@ def _public_status(status):
             "protocol_display_name": status.get("protocol_display_name"),
             "preset_display_name": status.get("preset_display_name"),
             "subject_id": status.get("subject_id"), "state": status.get("state", "IDLE"),
+            "parameters": status.get("parameters", {}),
+            "profile_identity": status.get("profile_identity"),
+            "parameter_overrides": status.get("parameter_overrides", {}),
             "elapsed_s": status.get("elapsed_s"), "eta_s": status.get("eta_s"),
             "capabilities": status.get("capabilities", {}),
             "recent_events": status.get("recent_events", []),

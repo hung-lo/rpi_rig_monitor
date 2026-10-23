@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "protocols": [
+    {
+      "protocol_id": "natural_images",
+      "display_name": "Natural Images",
+      "description": "Natural Images runner with the engine's operator-control v1 adapter.",
+      "adapter_type": "unix_json_v1",
+      "engine_protocol_id": "natural-images",
+      "executable": ["rpi-vstim"],
+      "working_directory": "/home/pi/rpi_vstim_suite",
+      "control_state_flag": "--control-state-file",
+      "control_state_artifact_type": "rpi_vstim.operator_control_state",
+      "session_metadata_flag": "--operator-session-metadata",
+      "runtime_fields": [
+        {
+          "name": "subject_id",
+          "display_name": "Subject / Mouse ID",
+          "required": true,
+          "type": "subject_id",
+          "cli_flag": "--mouse-id"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "image_count",
+          "display_name": "Number of natural images",
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 2800,
+          "units": "images",
+          "description": "Number of images selected by the engine's seeded session plan.",
+          "cli_flag": "--image-count"
+        }
+      ],
+      "presets": [
+        {
+          "preset_id": "operator_simulation",
+          "display_name": "Operator simulation",
+          "description": "FakeDisplayBackend simulation; no physical hardware.",
+          "config_path": "/home/pi/rpi_vstim_suite/config/rigs/natural_images.operator_simulation.toml",
+          "required_files": ["/home/pi/rpi_vstim_suite/config/rigs/natural_images.operator_simulation.toml"],
+          "arguments": [
+            "natural-images", "run", "--config",
+            "/home/pi/rpi_vstim_suite/config/rigs/natural_images.operator_simulation.toml",
+            "--simulate", "--operator-control", "--output-root",
+            "/var/lib/rpi-rig-monitor/simulations"
+          ],
+          "parameter_defaults": {"image_count": 5}
+        },
+        {
+          "preset_id": "pi5_hardware_smoke",
+          "display_name": "Pi5 hardware smoke",
+          "description": "Existing real display and camera smoke preset; reward remains disabled.",
+          "config_path": "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+          "required_files": ["/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml"],
+          "arguments": [
+            "natural-images", "run", "--config",
+            "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+            "--cameras", "--operator-control", "--output-root",
+            "/mnt/behavbox_ssd/sessions"
+          ],
+          "parameter_defaults": {"image_count": 20}
+        },
+        {
+          "preset_id": "pi5_hardware_smoke_licks",
+          "display_name": "Pi5 hardware smoke + licks",
+          "description": "Existing opt-in display, dual-camera, and lick-input smoke preset; reward remains disabled.",
+          "config_path": "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+          "required_files": ["/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml"],
+          "arguments": [
+            "natural-images", "run", "--config",
+            "/home/pi/rpi_vstim_suite/config/rigs/pi5_natural_image_demo.example.toml",
+            "--cameras", "--licks", "--operator-control", "--output-root",
+            "/mnt/behavbox_ssd/sessions"
+          ],
+          "parameter_defaults": {"image_count": 20}
+        }
+      ]
+    }
+  ]
+}

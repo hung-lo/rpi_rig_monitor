@@ -44,6 +44,10 @@ class FakeSupervisor:
                 "presets": [{"preset_id": "standard", "display_name": "Standard",
                              "description": "Test preset", "available": True, "unavailable_reason": None}],
             }]}
+        if request["command"] == "profiles":
+            if request["action"] == "list":
+                return {"ok": True, "profiles": []}
+            return {"ok": True, "result": {"profile_id": "profile-test", "version": 1}}
         if request["command"] == "control":
             if request["action"] == "prepare":
                 self.status.update({"session_id": "fake-1", "protocol": request["protocol_id"],
@@ -402,6 +406,41 @@ class WebTests(unittest.TestCase):
                                      headers={"Authorization": "Bearer invalid"}).status_code, 401)
         self.assertNotIn("secret", client.post("/api/control", json=body,
                                                 headers={"Authorization": "Bearer invalid"}).get_data(as_text=True))
+
+    def test_prepare_forwards_only_semantic_parameter_values(self):
+        supervisor = FakeSupervisor()
+        client = create_app(MonitorState(), supervisor=supervisor,
+                            control_token="secret").test_client()
+        headers = {"Authorization": "Bearer secret"}
+        body = {"command": "prepare", "request_id": "settings-1", "protocol_id": "fake",
+                "preset_id": "standard", "fields": {"subject_id": "example_mouse"},
+                "parameters": {"image_count": 12},
+                "profile_ref": {"profile_id": "profile-0123456789abcdef0123456789abcdef", "version": 1}}
+        self.assertEqual(client.post("/api/control", json=body, headers=headers).status_code, 200)
+        self.assertEqual(supervisor.calls[-1]["parameters"], {"image_count": 12})
+        self.assertEqual(supervisor.calls[-1]["profile_ref"], body["profile_ref"])
+        for key, value in (("argv", ["--image-count", "12"]), ("executable", "/bin/sh"),
+                           ("cwd", "/tmp"), ("env", {"PATH": "/tmp"}),
+                           ("config_path", "/etc/passwd"), ("control_state_path", "/tmp/state")):
+            invalid = dict(body, **{key: value})
+            self.assertEqual(client.post("/api/control", json=invalid, headers=headers).status_code, 400)
+
+    def test_profiles_are_readable_but_mutations_require_operator_auth(self):
+        supervisor = FakeSupervisor()
+        client = create_app(MonitorState(), supervisor=supervisor,
+                            control_token="secret").test_client()
+        self.assertEqual(client.get("/api/profiles?protocol_id=fake&preset_id=standard").status_code, 200)
+        body = {"action": "save", "protocol_id": "fake", "preset_id": "standard",
+                "name": "Test", "parameters": {}}
+        self.assertEqual(client.post("/api/profiles", json=body).status_code, 401)
+        response = client.post("/api/profiles", json=body,
+                               headers={"Authorization": "Bearer secret"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(supervisor.calls[-1]["command"], "profiles")
+        self.assertNotIn("secret", response.get_data(as_text=True))
+        invalid = dict(body, executable="/bin/sh")
+        self.assertEqual(client.post("/api/profiles", json=invalid,
+                                     headers={"Authorization": "Bearer secret"}).status_code, 400)
 
     def test_missing_supervisor_is_reported_as_unknown_and_is_not_started(self):
         class UnavailableSupervisor:

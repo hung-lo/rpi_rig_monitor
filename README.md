@@ -87,14 +87,44 @@ argv. See [`docs/external_protocols.md`](docs/external_protocols.md) for the
 file format.
 
 The Natural Images registration uses `protocol_id: natural_images`, engine ID
-`natural-images`, adapter `unix_json_v1`, and preset `operator_simulation`.
-Its fixed argv must include the VStim simulation profile, `--simulate`,
-`--operator-control`, and a temporary `--output-root`. Executable, checkout, and
-profile paths belong in the trusted registry file, not monitor source or browser
-requests. The trusted registry maps `control_state_flag` and the expected
-`control_state_artifact_type` to a unique path under `<state-dir>/control-state/`;
-the browser cannot supply these values. Missing executable/config paths make the
-entry unavailable.
+`natural-images`, adapter `unix_json_v1`, and the existing presets
+`operator_simulation`, `pi5_hardware_smoke`, and
+`pi5_hardware_smoke_licks`. A deployment example is in
+[`deploy/natural_images_registry.example.json`](deploy/natural_images_registry.example.json).
+It keeps the current defaults (5 simulated images and 20 images in each Pi5
+smoke preset) while exposing only the supported integer `image_count` setting.
+The server appends the validated value as `--image-count`; no browser value can
+select a CLI flag, config path, or executable.
+
+Named profiles live under `<supervisor-state-dir>/profiles/<protocol>/<preset>/`
+as versioned, owner-only JSON files. The supervisor validates and atomically
+writes them, so they survive Flask and supervisor restarts and a Pi reboot when
+the state directory is on persistent storage. The browser remembers only the
+selected profile ID; profile values stay on the server. Profile writes require
+the same bearer token as experiment controls. A session launch snapshots its
+parameter values, profile ID/version, and overrides into supervisor state and a
+private session-metadata sidecar. VStim copies the validated launch metadata to
+session `provenance.json` and `session_manifest.json`; changes to a saved
+profile affect future launches only.
+
+The trusted registry maps `control_state_flag` and the expected
+`control_state_artifact_type` to a unique path under `<state-dir>/control-state/`,
+and may map `session_metadata_flag` to the supervisor-created provenance
+sidecar. Missing executable/config paths mark an entry unavailable. Neither
+path is available to browser input.
+
+Manual bait buttons are rendered only when the running engine advertises the
+corresponding runtime capability. The monitor sends the semantic `bait_left` or
+`bait_right` action through the existing authenticated supervisor/control
+socket path and never accesses GPIO. Current Natural Images presets, including
+the real Pi5 smoke presets, keep reward disabled and do not advertise bait; no
+active bait button is available for them. An accepted command is not displayed
+as proof of delivery. The optional physical BCM23 button remains off unless a
+future engine configuration explicitly enables it.
+
+See [`docs/behavioral_settings_and_manual_bait.md`](docs/behavioral_settings_and_manual_bait.md)
+for the parameter contract, profile operations, deployment guidance, and
+rollback steps.
 
 ### systemd deployment
 

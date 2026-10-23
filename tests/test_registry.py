@@ -10,6 +10,7 @@ from monitor.registry import (
     ProtocolRegistry,
     RegistryError,
     RuntimeField,
+    SessionParameter,
     default_registry,
     validate_subject_id,
 )
@@ -115,6 +116,71 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(dict(spec.env), {})
             self.assertNotIn(str(config), json.dumps(registry.public_metadata()))
             self.assertEqual(registry.public_metadata()[0]["protocol_id"], "external_demo")
+
+    def test_typed_session_parameters_use_preset_defaults_and_allowlisted_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "task"
+            executable.write_text("#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+            config = root / "images.toml"
+            config.write_text("[protocol]\nname = 'natural-images'\n")
+            registry_file = root / "registry.json"
+            registry_file.write_text(json.dumps({
+                "schema_version": 1,
+                "protocols": [{
+                    "protocol_id": "natural_images", "display_name": "Natural Images",
+                    "description": "Simulation", "adapter_type": "unix_json_v1",
+                    "engine_protocol_id": "natural-images", "executable": [str(executable)],
+                    "parameters": [{"name": "image_count", "display_name": "Image count",
+                                    "type": "integer", "default": 5, "minimum": 1,
+                                    "maximum": 2800, "units": "images",
+                                    "description": "Number of selected natural images.",
+                                    "cli_flag": "--image-count"}],
+                    "presets": [
+                        {"preset_id": "operator_simulation", "display_name": "Simulation",
+                         "arguments": ["natural-images", "run", "--simulate"],
+                         "config_path": str(config), "parameter_defaults": {"image_count": 5}},
+                        {"preset_id": "hardware_smoke", "display_name": "Hardware smoke",
+                         "arguments": ["natural-images", "run"],
+                         "config_path": str(config), "parameter_defaults": {"image_count": 20}},
+                    ],
+                }],
+            }))
+            registry = ProtocolRegistry.from_json_file(registry_file)
+            metadata = registry.public_metadata()[0]
+            self.assertEqual(metadata["presets"][0]["parameters"][0]["default"], 5)
+            self.assertEqual(metadata["presets"][1]["parameters"][0]["default"], 20)
+            default = registry.resolve("natural_images", "operator_simulation", "s1", "/tmp/s.sock",
+                                       5055, {}, parameters={})
+            self.assertIn(("--image-count", "5"), list(zip(default.argv, default.argv[1:])))
+            override = registry.resolve("natural_images", "operator_simulation", "s2", "/tmp/s.sock",
+                                        5055, {}, parameters={"image_count": 9})
+            self.assertIn(("--image-count", "9"), list(zip(override.argv, override.argv[1:])))
+            self.assertEqual(dict(override.parameters), {"image_count": 9})
+            self.assertEqual(dict(override.parameter_overrides), {"image_count": 9})
+            with self.assertRaisesRegex(RegistryError, "integer"):
+                registry.resolve("natural_images", "operator_simulation", "s3", "/tmp/s.sock",
+                                 5055, {}, parameters={"image_count": True})
+            with self.assertRaisesRegex(RegistryError, "range"):
+                registry.resolve("natural_images", "operator_simulation", "s3", "/tmp/s.sock",
+                                 5055, {}, parameters={"image_count": 0})
+            with self.assertRaisesRegex(RegistryError, "unsupported session parameter"):
+                registry.resolve("natural_images", "operator_simulation", "s3", "/tmp/s.sock",
+                                 5055, {}, parameters={"rule_switch_block": 10})
+
+    def test_session_parameter_registry_definition_is_strict(self):
+        parameter = SessionParameter("image_count", "Image count", "integer", 5,
+                                     "Number of images.", "--image-count", 1, 2800, "images")
+        protocol = Protocol("natural_images", "Natural Images", "", "unix_json_v1", (sys.executable,),
+                            (Preset("simulation", "Simulation", "", ()),), parameters=(parameter,))
+        ProtocolRegistry((protocol,))
+        bad = SessionParameter("image_count", "Image count", "integer", True,
+                               "Number of images.", "--image-count", 1, 2800)
+        with self.assertRaisesRegex(RegistryError, "bounds or default"):
+            ProtocolRegistry((Protocol("natural_images", "Natural Images", "", "unix_json_v1",
+                                       (sys.executable,), (Preset("simulation", "Simulation", "", ()),),
+                                       parameters=(bad,)),))
 
     def test_durable_state_path_is_server_supplied_by_registered_cli_flag(self):
         with tempfile.TemporaryDirectory() as directory:

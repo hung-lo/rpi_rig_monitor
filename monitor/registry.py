@@ -7,7 +7,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 PROTOCOL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 FIELD_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -34,6 +34,28 @@ class RuntimeField:
 
 
 @dataclass(frozen=True)
+class SessionParameter:
+    """One typed, server-approved scientific setting."""
+
+    name: str
+    display_name: str
+    kind: str
+    default: Any
+    description: str
+    cli_flag: str
+    minimum: Optional[int] = None
+    maximum: Optional[int] = None
+    units: Optional[str] = None
+
+    def public_metadata(self, default=None):
+        value = self.default if default is None else default
+        return {"name": self.name, "display_name": self.display_name,
+                "type": self.kind, "default": value, "minimum": self.minimum,
+                "maximum": self.maximum, "units": self.units,
+                "description": self.description, "editable_before_prepare": True}
+
+
+@dataclass(frozen=True)
 class Preset:
     preset_id: str
     display_name: str
@@ -41,6 +63,7 @@ class Preset:
     arguments: Tuple[str, ...]
     required_files: Tuple[Path, ...] = ()
     config_path: Optional[Path] = None
+    parameter_defaults: Mapping[str, Any] = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +79,8 @@ class Protocol:
     engine_protocol_id: Optional[str] = None
     control_state_flag: Optional[str] = None
     control_state_artifact_type: Optional[str] = None
+    parameters: Tuple[SessionParameter, ...] = ()
+    session_metadata_flag: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +98,10 @@ class LaunchSpec:
     config_path: Optional[str] = None
     control_state_path: Optional[str] = None
     control_state_artifact_type: Optional[str] = None
+    parameters: Mapping[str, Any] = None
+    parameter_overrides: Mapping[str, Any] = None
+    profile_identity: Optional[Mapping[str, Any]] = None
+    session_metadata_path: Optional[str] = None
 
 
 def validate_subject_id(value):
@@ -119,9 +148,13 @@ class ProtocolRegistry:
                                 or (preset.config_path is not None and not preset.config_path.is_file()))
                 reason = (executable_error or ("Configured working directory is missing" if cwd_missing else None)
                           or ("Required preset configuration is missing" if missing_file else None))
+                preset_parameters = []
+                for parameter in protocol.parameters:
+                    default = (preset.parameter_defaults or {}).get(parameter.name, parameter.default)
+                    preset_parameters.append(parameter.public_metadata(default))
                 presets.append({"preset_id": preset.preset_id, "display_name": preset.display_name,
                                 "description": preset.description, "available": reason is None,
-                                "unavailable_reason": reason})
+                                "unavailable_reason": reason, "parameters": preset_parameters})
             available = any(item["available"] for item in presets)
             reason = None if available else next(
                 (item["unavailable_reason"] for item in presets if item["unavailable_reason"]),
@@ -135,7 +168,8 @@ class ProtocolRegistry:
         return result
 
     def resolve(self, protocol_id, preset_id, session_id, control_socket, telemetry_port, fields,
-                control_state_path=None):
+                control_state_path=None, parameters=None, profile_identity=None,
+                parameter_overrides=None, session_metadata_path=None):
         protocol = self.get(protocol_id)
         if protocol is None:
             raise RegistryError("unsupported protocol")
@@ -144,6 +178,16 @@ class ProtocolRegistry:
         preset = next((item for item in protocol.presets if item.preset_id == preset_id), None)
         if preset is None:
             raise RegistryError("unsupported preset")
+        resolved_parameters = self.validate_parameters(
+            protocol_id, preset_id, {} if parameters is None else parameters
+        )
+        defaults = {item.name: (preset.parameter_defaults or {}).get(item.name, item.default)
+                    for item in protocol.parameters}
+        if parameter_overrides is None:
+            parameter_overrides = {key: value for key, value in resolved_parameters.items()
+                                   if value != defaults[key]}
+        else:
+            parameter_overrides = dict(parameter_overrides)
         if not isinstance(fields, dict):
             raise RegistryError("runtime fields must be an object")
         definitions = {field.name: field for field in protocol.runtime_fields}
@@ -173,6 +217,9 @@ class ProtocolRegistry:
         for field in protocol.runtime_fields:
             if field.name in values and field.cli_flag:
                 argv.extend((field.cli_flag, values[field.name]))
+        for parameter in protocol.parameters:
+            if parameter.name in resolved_parameters:
+                argv.extend((parameter.cli_flag, str(resolved_parameters[parameter.name])))
         argv.extend(("--control-socket", str(control_socket), "--session-id", session_id,
                      "--telemetry-port", str(telemetry_port)))
         resolved_state_path = None
@@ -181,6 +228,12 @@ class ProtocolRegistry:
                 raise RegistryError("protocol requires a supervisor control-state path")
             argv.extend((protocol.control_state_flag, str(control_state_path)))
             resolved_state_path = str(control_state_path)
+        resolved_metadata_path = None
+        if protocol.session_metadata_flag is not None:
+            if not session_metadata_path:
+                raise RegistryError("protocol requires a supervisor session-metadata path")
+            argv.extend((protocol.session_metadata_flag, str(session_metadata_path)))
+            resolved_metadata_path = str(session_metadata_path)
         return LaunchSpec(
             protocol_id=protocol.protocol_id, preset_id=preset.preset_id,
             protocol_display_name=protocol.display_name, preset_display_name=preset.display_name,
@@ -193,7 +246,37 @@ class ProtocolRegistry:
             control_state_path=resolved_state_path,
             control_state_artifact_type=(protocol.control_state_artifact_type
                                          if resolved_state_path else None),
+            parameters=resolved_parameters,
+            parameter_overrides=parameter_overrides,
+            profile_identity=profile_identity,
+            session_metadata_path=resolved_metadata_path,
         )
+
+    def validate_parameters(self, protocol_id, preset_id, parameters):
+        protocol = self.get(protocol_id)
+        if protocol is None:
+            raise RegistryError("unsupported protocol")
+        preset = next((item for item in protocol.presets if item.preset_id == preset_id), None)
+        if preset is None:
+            raise RegistryError("unsupported preset")
+        if not isinstance(parameters, dict):
+            raise RegistryError("session parameters must be an object")
+        definitions = {item.name: item for item in protocol.parameters}
+        if set(parameters) - set(definitions):
+            raise RegistryError("unsupported session parameter")
+        resolved = {}
+        for name, definition in definitions.items():
+            value = parameters.get(name, (preset.parameter_defaults or {}).get(name, definition.default))
+            if definition.kind == "integer":
+                if type(value) is not int:
+                    raise RegistryError(name + " must be an integer")
+                if ((definition.minimum is not None and value < definition.minimum) or
+                        (definition.maximum is not None and value > definition.maximum)):
+                    raise RegistryError(name + " is outside the supported range")
+            else:
+                raise RegistryError("unsupported session parameter type")
+            resolved[name] = value
+        return resolved
 
 
 def default_registry(registry_file=None):
@@ -238,6 +321,12 @@ def _validate_protocol(protocol):
             raise RegistryError("durable control-state artifact type is required")
     elif protocol.control_state_artifact_type is not None:
         raise RegistryError("control-state artifact type requires a control-state CLI mapping")
+    if (protocol.session_metadata_flag is not None and
+            (protocol.adapter_type != "unix_json_v1"
+             or not isinstance(protocol.session_metadata_flag, str)
+             or not re.fullmatch(r"--[a-z][a-z0-9-]*", protocol.session_metadata_flag)
+             or protocol.session_metadata_flag in {"--control-socket", "--session-id", "--telemetry-port"})):
+        raise RegistryError("invalid supervisor session-metadata CLI mapping")
     if not protocol.executable or any(not isinstance(item, str) or not item or "\0" in item
                                       for item in protocol.executable):
         raise RegistryError("executable must be a non-empty list of argv strings")
@@ -284,6 +373,47 @@ def _validate_protocol(protocol):
         raise RegistryError("working_directory must be a Path")
     if protocol.control_state_flag in field_flags:
         raise RegistryError("durable control-state CLI mapping duplicates a runtime field")
+    if protocol.session_metadata_flag in field_flags:
+        raise RegistryError("session-metadata CLI mapping duplicates a runtime field")
+    parameter_names = set()
+    parameter_flags = set(field_flags)
+    if protocol.control_state_flag:
+        parameter_flags.add(protocol.control_state_flag)
+    if protocol.session_metadata_flag:
+        if protocol.session_metadata_flag in parameter_flags:
+            raise RegistryError("session-metadata CLI mapping is duplicated")
+        parameter_flags.add(protocol.session_metadata_flag)
+    for parameter in protocol.parameters:
+        if not isinstance(parameter, SessionParameter):
+            raise RegistryError("parameters must contain session parameter definitions")
+        if (not isinstance(parameter.name, str) or not FIELD_ID_RE.fullmatch(parameter.name)
+                or parameter.name in parameter_names):
+            raise RegistryError("invalid or duplicate session parameter")
+        parameter_names.add(parameter.name)
+        if (not isinstance(parameter.display_name, str) or not parameter.display_name
+                or not isinstance(parameter.description, str) or not parameter.description
+                or parameter.kind != "integer"):
+            raise RegistryError("invalid session parameter definition")
+        if (not isinstance(parameter.cli_flag, str)
+                or not re.fullmatch(r"--[a-z][a-z0-9-]*", parameter.cli_flag)
+                or parameter.cli_flag in parameter_flags):
+            raise RegistryError("invalid or duplicate session parameter CLI mapping")
+        parameter_flags.add(parameter.cli_flag)
+        if (parameter.minimum is None or type(parameter.minimum) is not int
+                or parameter.maximum is None or type(parameter.maximum) is not int
+                or parameter.minimum > parameter.maximum or type(parameter.default) is not int
+                or not parameter.minimum <= parameter.default <= parameter.maximum):
+            raise RegistryError("invalid session parameter bounds or default")
+        if parameter.units is not None and not isinstance(parameter.units, str):
+            raise RegistryError("session parameter units must be text")
+    for preset in protocol.presets:
+        defaults = preset.parameter_defaults or {}
+        if not isinstance(defaults, dict) or set(defaults) - parameter_names:
+            raise RegistryError("preset has unsupported parameter defaults")
+        for parameter in protocol.parameters:
+            value = defaults.get(parameter.name, parameter.default)
+            if (type(value) is not int or value < parameter.minimum or value > parameter.maximum):
+                raise RegistryError("preset parameter default is invalid: " + parameter.name)
 
 
 def _resolve_executable(executable):
@@ -302,7 +432,7 @@ def _resolve_executable(executable):
 def _protocol_from_json(raw, base_dir):
     required = {"protocol_id", "display_name", "description", "adapter_type", "executable", "presets"}
     allowed = required | {"working_directory", "runtime_fields", "engine_protocol_id", "control_state_flag",
-                          "control_state_artifact_type"}
+                          "control_state_artifact_type", "parameters", "session_metadata_flag"}
     if not isinstance(raw, dict) or not required.issubset(raw) or set(raw) - allowed:
         raise RegistryError("invalid protocol entry in registry file")
     executable = raw["executable"]
@@ -322,15 +452,19 @@ def _protocol_from_json(raw, base_dir):
     for item in raw["presets"]:
         preset_keys = {"preset_id", "display_name"}
         if not isinstance(item, dict) or not preset_keys.issubset(item) or set(item) - (
-                preset_keys | {"description", "arguments", "required_files", "config_path"}):
+                preset_keys | {"description", "arguments", "required_files", "config_path",
+                               "parameter_defaults"}):
             raise RegistryError("invalid preset entry in registry file")
         arguments = item.get("arguments", [])
         required_files = item.get("required_files", [])
-        if not isinstance(arguments, list) or not isinstance(required_files, list):
+        parameter_defaults = item.get("parameter_defaults", {})
+        if (not isinstance(arguments, list) or not isinstance(required_files, list)
+                or not isinstance(parameter_defaults, dict)):
             raise RegistryError("preset arguments and required_files must be lists")
         presets.append(Preset(item["preset_id"], item["display_name"], item.get("description", ""),
                               tuple(arguments), tuple(_config_path(value, base_dir) for value in required_files),
-                              _config_path(item["config_path"], base_dir) if "config_path" in item else None))
+                              _config_path(item["config_path"], base_dir) if "config_path" in item else None,
+                              parameter_defaults))
     fields = []
     raw_fields = raw.get("runtime_fields", [])
     if not isinstance(raw_fields, list):
@@ -342,10 +476,28 @@ def _protocol_from_json(raw, base_dir):
             raise RegistryError("runtime field requires name, display_name, and boolean required")
         fields.append(RuntimeField(item["name"], item["display_name"], item["required"],
                                    item.get("type", "subject_id"), item.get("cli_flag")))
+    parameters = []
+    raw_parameters = raw.get("parameters", [])
+    if not isinstance(raw_parameters, list):
+        raise RegistryError("parameters must be a list")
+    allowed_parameter_keys = {"name", "display_name", "type", "default", "description",
+                              "cli_flag", "minimum", "maximum", "units"}
+    for item in raw_parameters:
+        required_parameter_keys = {"name", "display_name", "type", "default", "description",
+                                   "cli_flag", "minimum", "maximum"}
+        if (not isinstance(item, dict) or set(item) - allowed_parameter_keys
+                or not required_parameter_keys.issubset(item)):
+            raise RegistryError("invalid session parameter entry")
+        parameters.append(SessionParameter(
+            item["name"], item["display_name"], item["type"], item["default"],
+            item["description"], item["cli_flag"], item["minimum"], item["maximum"],
+            item.get("units"),
+        ))
     return Protocol(raw["protocol_id"], raw["display_name"], raw["description"], raw["adapter_type"],
                     tuple(executable), tuple(presets), tuple(fields), working_directory,
                     raw.get("engine_protocol_id"), raw.get("control_state_flag"),
-                    raw.get("control_state_artifact_type"))
+                    raw.get("control_state_artifact_type"), tuple(parameters),
+                    raw.get("session_metadata_flag"))
 
 
 def _config_path(value, base_dir):
